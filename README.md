@@ -67,11 +67,4 @@ npm run dev
 - `GET /api/reports/weekly`: 周报（LLM 成功 → 智能总结；失败 → 模板降级）
 - `GET/PUT /api/settings`: 配置中心
 
-## 演示建议（答辩流程）
-
-1. 进入 `/home`，讲清“闭环产品链路”
-2. 进入 `/workspace`，上传 PDF → 预览 → OCR（扫描件）→ 整理错题
-3. 点开错题详情页，展示 AI 分析、相似题、再练与判分
-4. 进入 `/dashboard`，用折线/柱状/饼图讲数据闭环
-5. 一键生成周报，体现产品化能力与降级兜底
 
