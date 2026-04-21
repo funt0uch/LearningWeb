@@ -1,0 +1,13 @@
+0 verbose cli E:\Nodejs\node.exe E:\Nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.9.3
+2 info using node@v22.19.0
+3 silly config load:file:E:\Nodejs\node_modules\npm\npmrc
+4 silly config load:file:E:\LearningWeb\learning-web\.npmrc
+5 silly config load:file:C:\Users\ASUS\.npmrc
+6 silly config load:file:C:\Users\ASUS\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm run dev -p 3000
+8 verbose argv "run" "dev" "--" "-p" "3000"
+9 verbose logfile logs-max:10 dir:E:\LearningWeb\.npm-cache\_logs\2026-04-02T08_43_34_564Z-
+10 verbose logfile E:\LearningWeb\.npm-cache\_logs\2026-04-02T08_43_34_564Z-debug-0.log
+11 silly logfile start cleaning logs, removing 1 files
+12 silly logfile done cleaning log files

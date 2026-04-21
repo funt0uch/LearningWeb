@@ -1,0 +1,37 @@
+{
+  "summary": "（占位）已抽取候选题目，等待 LLM 生成解析与难度评估。",
+  "items": [
+    {
+      "question": "u6c42u6781u9650: lim_{x->0} sin x / x\nu9519u8befu4f5cu7b54: 0\nu6b63u786eu7b54u6848: 1\nu89e3u6790: u4f7fu7528u91cdu8981u6781u9650u516cu5f0fu3002\n2u3001u6c42u5bfc: f(x)=x^2+3x\nu9519u8befu4f5cu7b54: 2x\nu6b63u786eu7b54u6848: 2x+3\nu89e3u6790: u6bcfu4e00u9879u5206u522bu6c42u5bfcu3002",
+      "knowledge_point": "高数/极限",
+      "analysis": "（占位）LLM 未配置或输出不可解析，待接入后生成详细解析。",
+      "difficulty": "medium",
+      "source_page": 1
+    }
+  ],
+  "saved_path": "E:\\LearningWeb\\data\\generated\\wrong_questions_20260402T092748Z.json",
+  "raw_llm": null,
+  "llm_error": "DOUBAO_BASE_URL 未配置",
+  "candidates": [
+    {
+      "source_page": 1,
+      "question_text": "u6c42u6781u9650: lim_{x->0} sin x / x\nu9519u8befu4f5cu7b54: 0\nu6b63u786eu7b54u6848: 1\nu89e3u6790: u4f7fu7528u91cdu8981u6781u9650u516cu5f0fu3002\n2u3001u6c42u5bfc: f(x)=x^2+3x\nu9519u8befu4f5cu7b54: 2x\nu6b63u786eu7b54u6848: 2x+3\nu89e3u6790: u6bcfu4e00u9879u5206u522bu6c42u5bfcu3002"
+    }
+  ],
+  "pdf_meta": {
+    "format": "PDF 1.4",
+    "title": "",
+    "author": "",
+    "subject": "",
+    "keywords": "",
+    "creator": "",
+    "producer": "",
+    "creationDate": "",
+    "modDate": "",
+    "trapped": "",
+    "encryption": null,
+    "path": "E:\\LearningWeb\\data\\temp\\wrong_questions_sample.pdf",
+    "page_count": 1,
+    "assets_dir": "E:\\LearningWeb\\data\\generated\\pdf_assets\\pdf_ec2033b415bbc3e9"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "tree": [
+    {
+      "id": "math",
+      "label": "数学",
+      "children": [
+        {
+          "id": "calculus",
+          "label": "高数"
+        },
+        {
+          "id": "linear",
+          "label": "线代"
+        }
+      ]
+    },
+    {
+      "id": "exams",
+      "label": "考试试卷"
+    },
+    {
+      "id": "mistakes",
+      "label": "错题整理"
+    }
+  ],
+  "selectedFolderId": "calculus",
+  "expandedFolderIds": [
+    "math"
+  ]
+}

@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --shell-bg: #f7f6f3;
+  --sidebar-surface: #fbfbfa;
+  --sidebar-fg: #37352f;
+  --sidebar-muted: #9b9a97;
+  --sidebar-hover: rgba(55, 53, 47, 0.08);
+  --sidebar-active-bg: rgba(55, 53, 47, 0.09);
+  --sidebar-active-fg: #37352f;
+  --border: #e8e7e4;
+  --border-strong: #d3d1cb;
+  --main-bg: #ffffff;
+  --main-surface: #ffffff;
+  --main-fg: #37352f;
+  --main-muted: #787774;
+  --card-bg: #ffffff;
+  --chip-bg: #f0efed;
+  --chip-fg: #5c5b57;
+  --accent: #2383e2;
+  --accent-soft: rgba(35, 131, 226, 0.12);
+  --agent-bg: #f3f5f9;
+  --agent-border: #e2e6ef;
+  --agent-fg: #1a1f2e;
+  --agent-muted: #5c6578;
+  --agent-bubble-bg: #ffffff;
+  --agent-input-bg: #ffffff;
+  --shadow-card: 0 4px 20px rgba(15, 23, 42, 0.06);
+  --shadow-card-hover: 0 12px 32px rgba(15, 23, 42, 0.1);
+}
+
+@theme inline {
+  --color-background: var(--main-bg);
+  --color-foreground: var(--main-fg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--shell-bg);
+  color: var(--main-fg);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}

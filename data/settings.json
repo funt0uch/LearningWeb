@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "theme": "light",
+  "ocr_preference": true,
+  "learning_prefs": {
+    "daily_goal_minutes": 30,
+    "review_reminder": true
+  },
+  "ui": {
+    "show_knowledge_graph": true,
+    "weak_top_n": 5
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "summary": "（降级）已按规则抽取题干，等待 LLM 或校验通过。",
+  "items": [
+    {
+      "question": "纯文本 PDF 样例 ∙ 错题整理测试",
+      "answer": "",
+      "knowledge_point": "未分类",
+      "analysis": "（占位）LLM 不可用或输出未通过校验，请查看后端日志与 saved_path。",
+      "difficulty": "medium",
+      "source_page": 1,
+      "related_image_paths": []
+    },
+    {
+      "question": "求极限：当 x 趋于 0 时，sin(x)/x 的值是多少？",
+      "answer": "",
+      "knowledge_point": "高数/极限",
+      "analysis": "（占位）LLM 不可用或输出未通过校验，请查看后端日志与 saved_path。",
+      "difficulty": "medium",
+      "source_page": 1,
+      "related_image_paths": []
+    },
+    {
+      "question": "设 f(x)=x^2+3x，求 f'(x)。",
+      "answer": "",
+      "knowledge_point": "未分类",
+      "analysis": "（占位）LLM 不可用或输出未通过校验，请查看后端日志与 saved_path。",
+      "difficulty": "medium",
+      "source_page": 1,
+      "related_image_paths": []
+    },
+    {
+      "question": "矩阵 A=[[1,2],[3,4]]，求行列式 det(A)。",
+      "answer": "",
+      "knowledge_point": "线代/矩阵",
+      "analysis": "（占位）LLM 不可用或输出未通过校验，请查看后端日志与 saved_path。",
+      "difficulty": "medium",
+      "source_page": 1,
+      "related_image_paths": []
+    },
+    {
+      "question": "写出定积分 ∫_0^1 x dx 的结果。",
+      "answer": "",
+      "knowledge_point": "未分类",
+      "analysis": "（占位）LLM 不可用或输出未通过校验，请查看后端日志与 saved_path。",
+      "difficulty": "medium",
+      "source_page": 1,
+      "related_image_paths": []
+    },
+    {
+      "question": "解释函数可导与连续之间的关系。",
+      "answer": "",
+      "knowledge_point": "高数/导数",
+      "analysis": "（占位）LLM 不可用或输出未通过校验，请查看后端日志与 saved_path。",
+      "difficulty": "medium",
+      "source_page": 1,
+      "related_image_paths": []
+    }
+  ],
+  "meta": {
+    "pdf_path": "E:\\LearningWeb\\data\\temp\\samples\\sample_pure_text.pdf",
+    "retries_total": 3,
+    "degraded": true,
+    "vision_used": false,
+    "attempt_log": [
+      "attempt 1: LLM 异常 RuntimeError('未配置 API Key：请设置环境变量 ARK_API_KEY（推荐）或 DOUBAO_API_KEY')",
+      "attempt 2: LLM 异常 RuntimeError('未配置 API Key：请设置环境变量 ARK_API_KEY（推荐）或 DOUBAO_API_KEY')",
+      "attempt 3: LLM 异常 RuntimeError('未配置 API Key：请设置环境变量 ARK_API_KEY（推荐）或 DOUBAO_API_KEY')"
+    ],
+    "last_error": "文本 LLM 未产出可校验 JSON，已降级规则抽取"
+  }
+}

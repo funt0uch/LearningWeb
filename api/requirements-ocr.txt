@@ -1,0 +1,4 @@
+# 可选：扫描件 / 拍照 OCR（PaddleOCR）。CPU 环境可装 CPU 版 paddlepaddle。
+# pip install -r requirements-ocr.txt
+paddlepaddle
+paddleocr

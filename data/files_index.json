@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "id": "8a3d6960a7474b9cb3f3150679018986",
+      "name": "2503.10686v2 zh-Hans.pdf",
+      "path": "E:\\LearningWeb\\data\\files\\calculus\\2503.10686v2 zh-Hans.pdf",
+      "type": "application/pdf",
+      "size": 3323548,
+      "uploadedAt": "2026-04-02T09:47:04.924634+00:00",
+      "folderId": "calculus"
+    },
+    {
+      "id": "a91f9173189c4a5982fae423a460d592",
+      "name": "Day2_小车运行.pdf",
+      "path": "E:\\LearningWeb\\data\\files\\calculus\\Day2_小车运行.pdf",
+      "type": "application/pdf",
+      "size": 467685,
+      "uploadedAt": "2026-04-02T09:34:45.682284+00:00",
+      "folderId": "calculus"
+    },
+    {
+      "id": "c31e62ec5b2943268ca0136ef66bafd3",
+      "name": "sample.pdf",
+      "path": "E:\\LearningWeb\\data\\files\\calculus\\sample.pdf",
+      "type": "application/pdf",
+      "size": 601,
+      "uploadedAt": "2026-04-02T08:56:03.993921+00:00",
+      "folderId": "calculus"
+    }
+  ]
+}

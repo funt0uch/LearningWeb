@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "id": "a16b4d7d592044bcae5bdc80aac7eac4",
+      "action": "view",
+      "timestamp": "2026-04-14T06:31:41.238973+00:00",
+      "item_id": "4f2786712df09788"
+    },
+    {
+      "id": "c2e9b25ccf904e55a5f3f0b804ce56e8",
+      "action": "chat",
+      "timestamp": "2026-04-14T06:35:33.613097+00:00",
+      "meta": {
+        "preview": "你是什么模型",
+        "mode": "free"
+      }
+    },
+    {
+      "id": "fb7d28aef715496b95632a765eb10e81",
+      "action": "chat",
+      "timestamp": "2026-04-14T06:41:15.214044+00:00",
+      "meta": {
+        "preview": "2503.10686v2 zh-Hans.pdf总结一下这个pdf的内容",
+        "mode": "free"
+      }
+    },
+    {
+      "id": "9fa6e27cd0e24df08bd6cfb7bd046223",
+      "action": "chat",
+      "timestamp": "2026-04-14T07:19:38.693831+00:00",
+      "meta": {
+        "preview": "你可以看到我现在在看的pdf的内容吗",
+        "mode": "free"
+      }
+    },
+    {
+      "id": "f8c88f50beb64c1f9f548ef9754ae060",
+      "action": "chat",
+      "timestamp": "2026-04-14T07:59:50.762364+00:00",
+      "meta": {
+        "preview": "ping",
+        "mode": "free"
+      }
+    },
+    {
+      "id": "52632a05790e45dd9d6454bb2ec6b85d",
+      "action": "chat",
+      "timestamp": "2026-04-14T08:09:31.103863+00:00",
+      "meta": {
+        "preview": "你好",
+        "mode": "free"
+      }
+    },
+    {
+      "id": "74df5638d70d4d0ba8fb9f89a44cb559",
+      "action": "chat",
+      "timestamp": "2026-04-14T08:10:16.259347+00:00",
+      "meta": {
+        "preview": "【PDF 当前页】文件：2503.10686v2 zh-Hans.pdf；第 1/17 页。请结合图片回答。\n\n这一页讲了什么",
+        "mode": "free"
+      }
+    },
+    {
+      "id": "a7cec69cac4a43a0b0d82a58ac01e61e",
+      "action": "chat",
+      "timestamp": "2026-04-14T08:27:49.490952+00:00",
+      "meta": {
+        "preview": "【PDF 当前页】文件：2503.10686v2 zh-Hans.pdf；第 1/17 页。请结合图片回答。\n\n你好啊",
+        "mode": "free"
+      }
+    }
+  ]
+}
