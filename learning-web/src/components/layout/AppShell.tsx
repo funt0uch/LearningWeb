@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { ChevronLeft, LibraryBig, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { DEFAULT_PERSISTED_DOCUMENT } from "@/data/defaultFolderState";
 import { mockFilesByFolderId } from "@/data/mockFolders";
 import {
@@ -18,24 +22,44 @@ import type { TreeNode } from "@/types/folder";
 import { AgentPanel } from "./AgentPanel";
 import { MainContent } from "./MainContent";
 import { SidebarTree } from "./SidebarTree";
-import { ChevronLeft, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+
+const SIDEBAR_NAV = [
+  { href: "/home", label: "首页" },
+  { href: "/dashboard", label: "看板" },
+  { href: "/settings", label: "设置" },
+] as const;
+
+type PdfVisionSnapshot = {
+  title: string;
+  page: number;
+  pageCount: number;
+  dataUrl: string;
+};
 
 function findLabel(nodes: TreeNode[], id: string): string | null {
-  for (const n of nodes) {
-    if (n.id === id) return n.label;
-    if (n.children?.length) {
-      const inner = findLabel(n.children, id);
+  for (const node of nodes) {
+    if (node.id === id) return node.label;
+    if (node.children?.length) {
+      const inner = findLabel(node.children, id);
       if (inner) return inner;
     }
   }
   return null;
 }
 
+function commitTreeState(tree: TreeNode[], selectedId: string, expandedFolderIds: string[]) {
+  void saveFolderState({
+    version: 1,
+    tree,
+    selectedFolderId: selectedId,
+    expandedFolderIds,
+  }).catch(() => {});
+}
+
 export function AppShell() {
+  const pathname = usePathname() || "";
   const [tree, setTree] = useState<TreeNode[]>(DEFAULT_PERSISTED_DOCUMENT.tree);
-  const [selectedId, setSelectedId] = useState(
-    DEFAULT_PERSISTED_DOCUMENT.selectedFolderId,
-  );
+  const [selectedId, setSelectedId] = useState(DEFAULT_PERSISTED_DOCUMENT.selectedFolderId);
   const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>(
     DEFAULT_PERSISTED_DOCUMENT.expandedFolderIds,
   );
@@ -44,26 +68,18 @@ export function AppShell() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [pdfVisionProvider, setPdfVisionProvider] = useState<
-    (() => { title: string; page: number; pageCount: number; dataUrl: string } | null) | null
+    (() => PdfVisionSnapshot | null) | null
   >(null);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
 
-  // 重要：setState 接收 function 会被当成 updater 调用，这里用 () => fn 存“函数值”
-  const registerPdfVisionProvider = useCallback(
-    (
-      fn:
-        | (() => { title: string; page: number; pageCount: number; dataUrl: string } | null)
-        | null,
-    ) => {
-      setPdfVisionProvider(() => fn);
-    },
-    [],
-  );
+  const registerPdfVisionProvider = useCallback((fn: (() => PdfVisionSnapshot | null) | null) => {
+    setPdfVisionProvider(() => fn);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const raw = await fetchFolderState();
         if (cancelled) return;
@@ -72,9 +88,9 @@ export function AppShell() {
         setSelectedId(doc.selectedFolderId);
         setExpandedFolderIds(doc.expandedFolderIds);
         setLoadError(null);
-      } catch (e) {
+      } catch (error) {
         if (cancelled) return;
-        setLoadError(e instanceof Error ? e.message : "加载失败");
+        setLoadError(error instanceof Error ? error.message : "目录加载失败");
         setTree(DEFAULT_PERSISTED_DOCUMENT.tree);
         setSelectedId(DEFAULT_PERSISTED_DOCUMENT.selectedFolderId);
         setExpandedFolderIds(DEFAULT_PERSISTED_DOCUMENT.expandedFolderIds);
@@ -89,61 +105,66 @@ export function AppShell() {
 
   useEffect(() => {
     if (!hydrated) return;
-    const t = window.setTimeout(() => {
-      void saveFolderState({
-        version: 1,
-        tree,
-        selectedFolderId: selectedId,
-        expandedFolderIds,
-      }).catch(() => {});
+    const timer = window.setTimeout(() => {
+      commitTreeState(tree, selectedId, expandedFolderIds);
     }, 450);
-    return () => window.clearTimeout(t);
+    return () => window.clearTimeout(timer);
   }, [tree, selectedId, expandedFolderIds, hydrated]);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedFolderIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
   }, []);
 
-  const handleAddChild = useCallback((parentId: string | null) => {
-    const node: TreeNode = {
-      id: crypto.randomUUID(),
-      label: "新建文件夹",
-    };
-    setTree((prev) => addChild(prev, parentId, node));
-    setSelectedId(node.id);
-    if (parentId) {
-      setExpandedFolderIds((prev) =>
-        prev.includes(parentId) ? prev : [...prev, parentId],
-      );
-    }
-  }, []);
+  const createFolder = useCallback(
+    (parentId: string | null, label = "新建文件夹") => {
+      const node: TreeNode = {
+        id: crypto.randomUUID(),
+        label,
+      };
+      let nextTree: TreeNode[] = [];
+      setTree((prev) => {
+        nextTree = addChild(prev, parentId, node);
+        return nextTree;
+      });
+      setSelectedId(node.id);
+      setExpandedFolderIds((prev) => {
+        const nextExpanded = parentId && !prev.includes(parentId) ? [...prev, parentId] : prev;
+        queueMicrotask(() => commitTreeState(nextTree, node.id, nextExpanded));
+        return nextExpanded;
+      });
+      return node;
+    },
+    [],
+  );
+
+  const handleAddChild = useCallback(
+    (parentId: string | null) => {
+      createFolder(parentId);
+    },
+    [createFolder],
+  );
 
   const handleDelete = useCallback((id: string) => {
-    if (!window.confirm("确定删除该文件夹及其全部子文件夹？")) return;
+    if (!window.confirm("确定删除该文件夹及其全部子文件夹吗？")) return;
 
     setTree((prev) => {
       const target = findNode(prev, id);
-      const removeSet = new Set(
-        target ? collectSubtreeIds(target) : [],
-      );
+      const removeSet = new Set(target ? collectSubtreeIds(target) : []);
       const parentBefore = findParentId(prev, id);
       const nextTree = removeNode(prev, id);
 
       queueMicrotask(() => {
-        setSelectedId((currentSel) => {
-          if (!removeSet.has(currentSel)) return currentSel;
-          if (
-            typeof parentBefore === "string" &&
-            findNode(nextTree, parentBefore)
-          ) {
+        setSelectedId((current) => {
+          if (!removeSet.has(current)) return current;
+          if (typeof parentBefore === "string" && findNode(nextTree, parentBefore)) {
             return parentBefore;
           }
           return firstIdDfsOrEmpty(nextTree);
         });
-        setExpandedFolderIds((exp) =>
-          exp.filter((x) => !removeSet.has(x)),
+        setExpandedFolderIds((prevExpanded) =>
+          prevExpanded.filter((item) => !removeSet.has(item)),
         );
       });
 
@@ -155,7 +176,7 @@ export function AppShell() {
     (id: string, currentLabel: string) => {
       if (editingId !== null && editingId !== id) {
         const trimmed = renameDraft.trim() || "未命名";
-        setTree((t) => renameNode(t, editingId, trimmed));
+        setTree((current) => renameNode(current, editingId, trimmed));
       }
       setEditingId(id);
       setRenameDraft(currentLabel);
@@ -165,9 +186,8 @@ export function AppShell() {
 
   const handleCommitRename = useCallback(() => {
     if (editingId === null) return;
-    const id = editingId;
     const trimmed = renameDraft.trim() || "未命名";
-    setTree((t) => renameNode(t, id, trimmed));
+    setTree((current) => renameNode(current, editingId, trimmed));
     setEditingId(null);
     setRenameDraft("");
   }, [editingId, renameDraft]);
@@ -181,85 +201,109 @@ export function AppShell() {
   const files = mockFilesByFolderId[selectedId] ?? [];
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-[var(--shell-bg)] text-[var(--main-fg)]">
+    <div className="flex h-full min-h-0 w-full overflow-hidden bg-transparent text-[var(--main-fg)]">
       {!leftCollapsed ? (
-        <aside className="flex w-[280px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--sidebar-surface)]">
-        <div className="shrink-0 border-b border-[var(--border)] px-3 py-3">
-          <div className="flex items-center gap-2 px-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[14px] font-bold text-[var(--accent)]">
-              L
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-[14px] font-semibold text-[var(--sidebar-fg)]">
-                学习资料库
-              </p>
-              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
-                <a href="/home" className="text-[var(--accent)] hover:underline">
-                  首页
-                </a>
-                <a href="/dashboard" className="text-[var(--accent)] hover:underline">
-                  数据看板
-                </a>
-                <a href="/settings" className="text-[var(--accent)] hover:underline">
-                  设置
-                </a>
+        <aside className="flex w-[292px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--sidebar-surface)] backdrop-blur-xl">
+          <div className="lw-hairline-top shrink-0 border-b border-[var(--border)] px-4 py-4">
+            <div className="flex items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--card-bg)] shadow-[var(--shadow-sm)]">
+                <Image
+                  src="/learningweb-mark.png"
+                  alt="LearningWeb"
+                  width={34}
+                  height={34}
+                  className="h-8 w-8 object-contain"
+                />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[15px] font-black tracking-tight text-[var(--sidebar-fg)]">
+                  LearningWeb
+                </p>
+                <p className="mt-1 flex items-center gap-1.5 text-[11px] leading-4 text-[var(--sidebar-muted)]">
+                  <LibraryBig className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  资料库 · 学习闭环
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {SIDEBAR_NAV.map(({ href, label }) => {
+                    const active = pathname === href || pathname.startsWith(`${href}/`);
+                    return (
+                      <Link
+                        key={href}
+                        href={href}
+                        className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                          active
+                            ? "bg-[var(--accent-soft)] text-[var(--accent)] shadow-[var(--shadow-sm)]"
+                            : "text-[var(--sidebar-muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--sidebar-fg)]"
+                        }`}
+                      >
+                        {label}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
-              <p className="truncate text-[11px] text-[var(--sidebar-muted)]">
-                {hydrated
-                  ? loadError
-                    ? "离线默认目录 · API 未连接"
-                    : "目录 · E:\\LearningWeb\\data\\folders.json"
-                  : "正在加载目录…"}
-              </p>
+              <button
+                type="button"
+                onClick={() => setLeftCollapsed(true)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--sidebar-fg)] shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:bg-[var(--chip-bg)]"
+                title="收起文件夹栏"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setLeftCollapsed(true)}
-              className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-white text-[var(--sidebar-fg)] shadow-sm transition hover:bg-[var(--chip-bg)]"
-              title="收起文件夹栏"
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </button>
+
+            <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--chip-bg)]/55 px-3 py-2 text-[11px] leading-5 text-[var(--sidebar-muted)] shadow-inner">
+              {hydrated
+                ? loadError
+                  ? "离线目录 · API 未连接"
+                  : "已连接本地资料目录"
+                : "正在加载目录..."}
+            </div>
           </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto px-2 py-3">
-          <SidebarTree
-            nodes={tree}
-            selectedId={selectedId}
-            expandedFolderIds={expandedFolderIds}
-            onSelect={setSelectedId}
-            onToggleExpand={toggleExpand}
-            onAddChild={handleAddChild}
-            onDelete={handleDelete}
-            editingId={editingId}
-            renameDraft={renameDraft}
-            onRenameDraftChange={setRenameDraft}
-            onStartRename={handleStartRename}
-            onCommitRename={handleCommitRename}
-            onCancelRename={handleCancelRename}
-            disabled={!hydrated}
-          />
-        </div>
+
+          <div className="min-h-0 flex-1 overflow-auto px-2 py-3">
+            <SidebarTree
+              nodes={tree}
+              selectedId={selectedId}
+              expandedFolderIds={expandedFolderIds}
+              onSelect={setSelectedId}
+              onToggleExpand={toggleExpand}
+              onAddChild={handleAddChild}
+              onDelete={handleDelete}
+              editingId={editingId}
+              renameDraft={renameDraft}
+              onRenameDraftChange={setRenameDraft}
+              onStartRename={handleStartRename}
+              onCommitRename={handleCommitRename}
+              onCancelRename={handleCancelRename}
+              disabled={!hydrated}
+            />
+          </div>
         </aside>
       ) : (
         <button
           type="button"
           onClick={() => setLeftCollapsed(false)}
-          className="flex w-[46px] shrink-0 flex-col items-center justify-start gap-2 border-r border-[var(--border)] bg-[var(--sidebar-surface)] px-2 py-3 text-[11px] text-[var(--sidebar-fg)] hover:bg-white/60"
+          className="flex w-[48px] shrink-0 flex-col items-center justify-start gap-2 border-r border-[var(--border)] bg-[var(--sidebar-surface)] px-2 py-4 text-[11px] font-semibold text-[var(--sidebar-fg)] transition hover:bg-[var(--card-bg)]"
           title="展开文件夹栏"
         >
           <PanelLeftOpen className="h-5 w-5" />
           <span className="[writing-mode:vertical-rl]">文件夹</span>
         </button>
       )}
+
       <MainContent
         folderLabel={folderLabel}
         files={files}
         selectedId={selectedId}
+        folderTree={tree}
+        onCreateFolder={createFolder}
+        onSelectFolder={setSelectedId}
         onDeleteCurrent={() => handleDelete(selectedId)}
         canDelete={hydrated && Boolean(selectedId) && tree.length > 0}
         onRegisterPdfVisionProvider={registerPdfVisionProvider}
       />
+
       {!agentCollapsed ? (
         <AgentPanel
           pdfVisionProvider={pdfVisionProvider}
@@ -269,11 +313,11 @@ export function AppShell() {
         <button
           type="button"
           onClick={() => setAgentCollapsed(false)}
-          className="flex w-[46px] shrink-0 flex-col items-center justify-start gap-2 border-l border-[var(--agent-border)] bg-gradient-to-b from-[#f6f8fc] via-[var(--agent-bg)] to-[#eef2fa] px-2 py-3 text-[11px] text-[var(--agent-fg)] hover:bg-white/60"
+          className="flex w-[48px] shrink-0 flex-col items-center justify-start gap-2 border-l border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 py-4 text-[11px] font-semibold text-[var(--agent-fg)] transition hover:brightness-[1.02]"
           title="展开 AI 助手"
         >
           <ChevronLeft className="h-5 w-5" />
-          <span className="[writing-mode:vertical-rl]">AI</span>
+          <span className="[writing-mode:vertical-rl]">AI 助手</span>
         </button>
       )}
     </div>

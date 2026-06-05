@@ -1,11 +1,5 @@
 import type { PersistedFolderDocument } from "@/types/folder";
-
-function apiBase(): string {
-  return (
-    process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ??
-    "http://127.0.0.1:8000"
-  );
-}
+import { apiBase } from "./apiBase";
 
 export async function fetchFolderState(): Promise<PersistedFolderDocument> {
   const res = await fetch(`${apiBase()}/api/folders-state`, {
@@ -17,9 +11,7 @@ export async function fetchFolderState(): Promise<PersistedFolderDocument> {
   return (await res.json()) as PersistedFolderDocument;
 }
 
-export async function saveFolderState(
-  doc: PersistedFolderDocument,
-): Promise<void> {
+export async function saveFolderState(doc: PersistedFolderDocument): Promise<void> {
   const res = await fetch(`${apiBase()}/api/folders-state`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

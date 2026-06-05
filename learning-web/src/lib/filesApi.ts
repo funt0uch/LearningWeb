@@ -1,6 +1,8 @@
 import type {
   IndexedFileItem,
   KnowledgeStatsResponse,
+  PdfReportResponse,
+  PdfReportType,
   WrongItemDetailResponse,
   WrongQuestionsFromPdfResponse,
 } from "@/types/folder";
@@ -56,6 +58,29 @@ export async function wrongQuestionsFromPdf(
   return (await res.json()) as WrongQuestionsFromPdfResponse;
 }
 
+export async function generatePdfReport(opts: {
+  fileId: string;
+  reportType: PdfReportType;
+  targetFolderId?: string;
+  targetLabel?: string;
+}): Promise<PdfReportResponse> {
+  const res = await fetch(`${apiBase()}/api/tasks/pdf-report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      file_id: opts.fileId,
+      report_type: opts.reportType,
+      target_folder_id: opts.targetFolderId,
+      target_label: opts.targetLabel,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`AI PDF 生成失败：HTTP ${res.status} ${text}`);
+  }
+  return (await res.json()) as PdfReportResponse;
+}
+
 export async function postChat(opts: {
   message: string;
   mode?: "explain" | "summarize" | "similar" | "free";
@@ -71,8 +96,8 @@ export async function postChat(opts: {
     }),
   });
   if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`对话失败：HTTP ${res.status} ${t}`);
+    const text = await res.text();
+    throw new Error(`对话失败：HTTP ${res.status} ${text}`);
   }
   return (await res.json()) as { ok: boolean; reply: string; mode?: string };
 }
@@ -84,14 +109,9 @@ export async function getKnowledgeStats(): Promise<KnowledgeStatsResponse> {
 }
 
 export async function getWrongItem(itemId: string): Promise<WrongItemDetailResponse> {
-  const res = await fetch(
-    `${apiBase()}/api/wrong-items/${encodeURIComponent(itemId)}`,
-    { cache: "no-store" },
-  );
+  const res = await fetch(`${apiBase()}/api/wrong-items/${encodeURIComponent(itemId)}`, {
+    cache: "no-store",
+  });
   if (!res.ok) throw new Error(`题目未找到：HTTP ${res.status}`);
   return (await res.json()) as WrongItemDetailResponse;
 }
-
-// 兼容 Turbopack/某些环境对 localhost 的 fetch 问题：统一指向 127.0.0.1
-// （仅在未显式配置 NEXT_PUBLIC_API_BASE 时生效）
-

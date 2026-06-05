@@ -29,6 +29,8 @@ export type IndexedFileItem = {
   size: number;
   uploadedAt: string;
   folderId: string;
+  sourceFileId?: string;
+  generatedBy?: string;
 };
 
 export type WrongQuestionItemDto = {
@@ -75,4 +77,14 @@ export type WrongQuestionsFromPdfResponse = {
   vision_used: boolean;
   last_error: string | null;
   attempt_log: string[];
+};
+
+export type PdfReportType = "wrong" | "knowledge";
+
+export type PdfReportResponse = {
+  ok: boolean;
+  report_type: PdfReportType;
+  target_folder_id: string;
+  target_label: string;
+  file: IndexedFileItem;
 };

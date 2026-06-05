@@ -1,41 +1,64 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import {
+  BarChart3,
+  BookOpenCheck,
+  FileText,
+  FolderOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+  Search,
+  Sparkles,
+  Trash2,
+  UploadCloud,
+  X,
+} from "lucide-react";
 import { KnowledgeGraphTree } from "@/components/learning/KnowledgeGraphTree";
+import { PdfPreview } from "@/components/pdf/PdfPreview";
 import {
   deleteFile,
   fileDownloadUrl,
+  generatePdfReport,
   getKnowledgeStats,
   listFiles,
   uploadFile,
-  wrongQuestionsFromPdf,
 } from "@/lib/filesApi";
 import { getKnowledgeGraph, getReviewRecommendations } from "@/lib/learningApi";
 import type {
   IndexedFileItem,
   KnowledgeStatsResponse,
   MockFileItem,
-  WrongQuestionsFromPdfResponse,
+  PdfReportType,
+  TreeNode,
 } from "@/types/folder";
-import { PdfPreview } from "@/components/pdf/PdfPreview";
-
-const kindLabel: Record<MockFileItem["kind"], string> = {
-  note: "笔记",
-  pdf: "PDF",
-  sheet: "表格",
-};
 
 type MainContentProps = {
   folderLabel: string;
   files: MockFileItem[];
   selectedId: string;
+  folderTree: TreeNode[];
   canDelete: boolean;
   onDeleteCurrent: () => void;
+  onCreateFolder: (parentId: string | null, label?: string) => TreeNode;
+  onSelectFolder: (folderId: string) => void;
   onRegisterPdfVisionProvider?: (
     fn: (() => { title: string; page: number; pageCount: number; dataUrl: string } | null) | null,
   ) => void;
 };
+
+type FolderOption = {
+  id: string;
+  label: string;
+  depth: number;
+};
+
+type ReportDraft = {
+  file: IndexedFileItem;
+  type: PdfReportType;
+} | null;
 
 function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes)) return "-";
@@ -44,72 +67,101 @@ function formatSize(bytes: number): string {
   if (kb < 1024) return `${kb.toFixed(1)} KB`;
   const mb = kb / 1024;
   if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  const gb = mb / 1024;
-  return `${gb.toFixed(1)} GB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("zh-CN", { hour12: false });
 }
 
-function fileIcon(type: string, name: string): string {
-  const lower = name.toLowerCase();
-  if (type.includes("pdf") || lower.endsWith(".pdf")) return "PDF";
-  if (type.includes("word") || lower.endsWith(".doc") || lower.endsWith(".docx"))
-    return "DOC";
-  if (type.includes("excel") || lower.endsWith(".xls") || lower.endsWith(".xlsx"))
-    return "XLS";
-  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg"))
-    return "IMG";
+function isPdfFile(file: IndexedFileItem): boolean {
+  return file.type.toLowerCase().includes("pdf") || file.name.toLowerCase().endsWith(".pdf");
+}
+
+function fileBadge(file: IndexedFileItem): string {
+  if (isGeneratedReport(file)) return "报告";
+  const name = file.name.toLowerCase();
+  if (isPdfFile(file)) return "PDF";
+  if (name.endsWith(".doc") || name.endsWith(".docx")) return "DOC";
+  if (name.endsWith(".xls") || name.endsWith(".xlsx")) return "XLS";
+  if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")) return "IMG";
   return "FILE";
 }
 
-const WQ_PAGE_SIZE = 5;
-
-function isPdfIndexed(f: IndexedFileItem): boolean {
-  return f.type.toLowerCase().includes("pdf") || f.name.toLowerCase().endsWith(".pdf");
+function readableKindLabel(kind: MockFileItem["kind"]): string {
+  if (kind === "note") return "笔记";
+  if (kind === "sheet") return "表格";
+  return "PDF";
 }
 
-function difficultyLabel(d: WrongQuestionsFromPdfResponse["items"][number]["difficulty"]): string {
-  if (d === "easy") return "容易";
-  if (d === "hard") return "困难";
-  return "中等";
+function isGeneratedReport(file: IndexedFileItem): boolean {
+  const marker = file.generatedBy ?? "";
+  return (
+    marker.startsWith("pdf-report:") ||
+    file.name.includes("知识点总结报告") ||
+    file.name.includes("错题整理报告")
+  );
+}
+
+function flattenFolders(nodes: TreeNode[], depth = 0): FolderOption[] {
+  return nodes.flatMap((node) => [
+    { id: node.id, label: node.label, depth },
+    ...flattenFolders(node.children ?? [], depth + 1),
+  ]);
+}
+
+function recommendedFolderName(type: PdfReportType) {
+  return type === "wrong" ? "错题整理" : "知识点总结";
 }
 
 export function MainContent({
   folderLabel,
   files,
   selectedId,
+  folderTree,
   canDelete,
   onDeleteCurrent,
+  onCreateFolder,
+  onSelectFolder,
   onRegisterPdfVisionProvider,
 }: MainContentProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [fileItems, setFileItems] = useState<IndexedFileItem[]>([]);
   const [activeFile, setActiveFile] = useState<IndexedFileItem | null>(null);
-  const [wq, setWq] = useState<WrongQuestionsFromPdfResponse | null>(null);
-  const [wqForId, setWqForId] = useState<string | null>(null);
-  const [wqBusy, setWqBusy] = useState(false);
-  const [wqErr, setWqErr] = useState<string | null>(null);
-  const [wqPage, setWqPage] = useState(0);
-  const [kstats, setKstats] = useState<KnowledgeStatsResponse | null>(null);
+  const [query, setQuery] = useState("");
+  const [fileKind, setFileKind] = useState<"all" | "pdf" | "other">("all");
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [fileListOpen, setFileListOpen] = useState(true);
+  const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStatsResponse | null>(null);
   const [reviewToday, setReviewToday] = useState<string[]>([]);
   const [graphTree, setGraphTree] = useState<Record<string, unknown> | null>(null);
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [reportBusy, setReportBusy] = useState<{ fileId: string; type: PdfReportType } | null>(
+    null,
+  );
+  const [reportDraft, setReportDraft] = useState<ReportDraft>(null);
+  const [targetFolderId, setTargetFolderId] = useState("");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
 
-  const activeIsPdf = useMemo(() => {
-    if (!activeFile) return false;
-    const t = activeFile.type.toLowerCase();
-    const n = activeFile.name.toLowerCase();
-    return t.includes("pdf") || n.endsWith(".pdf");
-  }, [activeFile]);
-
+  const folderOptions = useMemo(() => flattenFolders(folderTree), [folderTree]);
   const activeUrl = activeFile ? fileDownloadUrl(activeFile.id) : "";
-  const activeTitle = activeFile?.name || "";
+  const activeIsPdf = activeFile ? isPdfFile(activeFile) : false;
+
+  const filteredFiles = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    return fileItems.filter((file) => {
+      const isPdf = isPdfFile(file);
+      if (fileKind === "pdf" && !isPdf) return false;
+      if (fileKind === "other" && isPdf) return false;
+      if (!keyword) return true;
+      return file.name.toLowerCase().includes(keyword) || file.type.toLowerCase().includes(keyword);
+    });
+  }, [fileItems, fileKind, query]);
 
   const registerVisionProvider = useCallback(
     (
@@ -120,22 +172,20 @@ export function MainContent({
       onRegisterPdfVisionProvider?.(
         fn
           ? () => {
-              const r = fn();
-              if (!r) return null;
-              return { title: activeTitle, ...r };
+              const result = fn();
+              if (!result) return null;
+              return { title: activeFile?.name ?? "当前 PDF", ...result };
             }
           : null,
       );
     },
-    [onRegisterPdfVisionProvider, activeTitle],
+    [activeFile?.name, onRegisterPdfVisionProvider],
   );
 
-  // 阅读 PDF 时默认收起顶部概览区，避免“看着变扭”
   useEffect(() => {
-    if (activeFile && activeIsPdf) setHeaderCollapsed(true);
+    if (activeFile && activeIsPdf) setSummaryOpen(false);
   }, [activeFile, activeIsPdf]);
 
-  // 切换文件时清空“按需视觉提供器”
   useEffect(() => {
     onRegisterPdfVisionProvider?.(null);
   }, [activeUrl, onRegisterPdfVisionProvider]);
@@ -143,22 +193,24 @@ export function MainContent({
   useEffect(() => {
     let cancelled = false;
     setActiveFile(null);
-    setErr(null);
+    setError(null);
     if (!selectedId) {
       setFileItems([]);
       return;
     }
-    (async () => {
+
+    void (async () => {
       try {
         const list = await listFiles(selectedId);
         if (!cancelled) setFileItems(list);
-      } catch (e) {
+      } catch (err) {
         if (!cancelled) {
-          setErr(e instanceof Error ? e.message : "加载文件列表失败");
+          setError(err instanceof Error ? err.message : "文件列表加载失败");
           setFileItems([]);
         }
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -168,458 +220,692 @@ export function MainContent({
     let cancelled = false;
     void (async () => {
       try {
-        const k = await getKnowledgeStats();
-        if (!cancelled) setKstats(k);
+        const stats = await getKnowledgeStats();
+        if (!cancelled) setKnowledgeStats(stats);
       } catch {
-        if (!cancelled) setKstats(null);
+        if (!cancelled) setKnowledgeStats(null);
       }
+
       try {
-        const rv = await getReviewRecommendations(8);
-        if (!cancelled) setReviewToday(rv.today ?? []);
+        const review = await getReviewRecommendations(8);
+        if (!cancelled) setReviewToday(review.today ?? []);
       } catch {
         if (!cancelled) setReviewToday([]);
       }
+
       try {
-        const g = await getKnowledgeGraph();
-        if (!cancelled) setGraphTree((g.tree as Record<string, unknown>) ?? null);
+        const graph = await getKnowledgeGraph();
+        if (!cancelled) setGraphTree((graph.tree as Record<string, unknown>) ?? null);
       } catch {
         if (!cancelled) setGraphTree(null);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [wq]);
+  }, []);
 
-  async function refresh() {
-    if (!selectedId) return;
-    const list = await listFiles(selectedId);
-    setFileItems(list);
+  async function refreshFiles(folderId = selectedId) {
+    if (!folderId) return;
+    const list = await listFiles(folderId);
+    if (folderId === selectedId) setFileItems(list);
   }
 
   async function handleUpload(filesToUpload: FileList | null) {
     if (!filesToUpload?.length || !selectedId) return;
     setBusy(true);
-    setErr(null);
+    setError(null);
+    setNotice(null);
     try {
-      for (const f of Array.from(filesToUpload)) {
-        await uploadFile({ folderId: selectedId, file: f });
+      const filesToSave = Array.from(filesToUpload);
+      for (const file of filesToSave) {
+        await uploadFile({ folderId: selectedId, file });
       }
-      await refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "上传失败");
+      await refreshFiles();
+      setNotice(`上传成功，${filesToSave.length} 个文件已加入当前资料夹。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "上传失败");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
     }
   }
 
-  async function handleWrongQuestions(f: IndexedFileItem) {
-    setActiveFile(f);
-    setWqBusy(true);
-    setWqErr(null);
-    try {
-      const r = await wrongQuestionsFromPdf(f.id);
-      setWq(r);
-      setWqForId(f.id);
-      setWqPage(0);
-    } catch (e) {
-      setWq(null);
-      setWqForId(f.id);
-      setWqErr(e instanceof Error ? e.message : "整理失败");
-    } finally {
-      setWqBusy(false);
-    }
-  }
-
-  async function handleDeleteFile(id: string) {
-    if (!window.confirm("确定删除该文件？")) return;
+  async function handleDeleteFile(fileId: string) {
+    if (!window.confirm("确定删除这个文件吗？")) return;
     setBusy(true);
-    setErr(null);
+    setError(null);
+    setNotice(null);
     try {
-      await deleteFile(id);
-      if (activeFile?.id === id) setActiveFile(null);
-      await refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "删除失败");
+      await deleteFile(fileId);
+      if (activeFile?.id === fileId) setActiveFile(null);
+      await refreshFiles();
+      setNotice("文件已删除。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败");
     } finally {
       setBusy(false);
     }
   }
 
+  function openReportDialog(file: IndexedFileItem, type: PdfReportType) {
+    const preferred = folderOptions.find((item) => item.label === recommendedFolderName(type));
+    setReportDraft({ file, type });
+    setTargetFolderId(preferred?.id ?? selectedId);
+    setNewFolderName(recommendedFolderName(type));
+    setNewFolderParentId(type === "wrong" || type === "knowledge" ? null : selectedId);
+  }
+
+  async function submitReport() {
+    if (!reportDraft) return;
+    let targetId = targetFolderId || selectedId;
+    let targetLabel =
+      folderOptions.find((item) => item.id === targetId)?.label ?? recommendedFolderName(reportDraft.type);
+
+    if (newFolderName.trim()) {
+      const existing = folderOptions.find(
+        (item) => item.label === newFolderName.trim() && item.id === targetFolderId,
+      );
+      if (!existing && targetFolderId === "__new__") {
+        const created = onCreateFolder(newFolderParentId, newFolderName.trim());
+        targetId = created.id;
+        targetLabel = created.label;
+      }
+    }
+
+    setActiveFile(reportDraft.file);
+    setReportBusy({ fileId: reportDraft.file.id, type: reportDraft.type });
+    setError(null);
+    setNotice(null);
+    setReportDraft(null);
+    try {
+      const result = await generatePdfReport({
+        fileId: reportDraft.file.id,
+        reportType: reportDraft.type,
+        targetFolderId: targetId,
+        targetLabel,
+      });
+      setFileItems((current) =>
+        result.target_folder_id === selectedId
+          ? [result.file, ...current.filter((item) => item.id !== result.file.id)]
+          : current,
+      );
+      setActiveFile(result.file);
+      await refreshFiles(result.target_folder_id);
+      setNotice(`已生成《${result.file.name}》，存放在“${result.target_label}”。`);
+      onSelectFolder(result.target_folder_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI PDF 生成失败");
+    } finally {
+      setReportBusy(null);
+    }
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--main-bg)]">
-      <header className="shrink-0 border-b border-[var(--border)] bg-[var(--main-surface)] px-8 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <header className="lw-hairline-top shrink-0 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--main-bg)_90%,transparent)] px-6 py-4 backdrop-blur-xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold tracking-tight text-[var(--main-fg)]">
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--accent)]">
+              当前资料夹
+            </p>
+            <h1 className="mt-1 truncate text-[24px] font-black tracking-tight text-[var(--main-fg)]">
               {folderLabel}
             </h1>
-            <p className="mt-1 text-[13px] text-[var(--main-muted)]">
-              {files.length} 个条目 · 卡片仍为 mock · 目录由 FastAPI 写入{" "}
-              <code className="rounded bg-[var(--chip-bg)] px-1 text-[12px]">
-                folders.json
-              </code>
+            <p className="mt-1 max-w-2xl text-[13px] leading-6 text-[var(--main-muted)]">
+              上传课程资料，预览 PDF，生成错题报告和知识点总结。生成后会自动跳转到存放文件夹。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setHeaderCollapsed((v) => !v)}
-              className="shrink-0 rounded-md border border-[var(--border)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--main-fg)] hover:bg-[var(--chip-bg)]"
-              title="收起/展开顶部概览区（薄弱知识点/推荐复习/知识点关系图）"
+              onClick={() => setSummaryOpen((value) => !value)}
+              className="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-4 py-2 text-[12px] font-bold text-[var(--main-fg)] shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:bg-[var(--chip-bg)]"
             >
-              {headerCollapsed ? "展开概览" : "收起概览"}
+              {summaryOpen ? "收起概览" : "展开概览"}
             </button>
             {canDelete && selectedId ? (
               <button
                 type="button"
                 onClick={onDeleteCurrent}
-                className="shrink-0 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-[12px] font-medium text-red-700 hover:bg-red-100"
+                className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-[12px] font-bold text-red-700 transition hover:-translate-y-px hover:bg-red-100"
               >
                 删除当前文件夹
               </button>
             ) : null}
           </div>
         </div>
-        {!headerCollapsed && kstats && kstats.weak_top5.length > 0 ? (
-          <div className="mt-4 rounded-lg border border-[var(--border)] bg-white/60 px-4 py-3">
-            <p className="text-[12px] font-semibold text-[var(--main-fg)]">
-              薄弱知识点 TOP5（全库错题聚合）
-            </p>
-            <ul className="mt-2 grid grid-cols-1 gap-1.5 text-[12px] sm:grid-cols-2">
-              {kstats.weak_top5.map((row, i) => (
-                <li
-                  key={row.name}
-                  className="flex items-baseline justify-between gap-2 text-[var(--main-muted)]"
-                >
-                  <span>
-                    <span className="text-[var(--main-muted)]">{i + 1}. </span>
-                    <span className="font-medium text-[var(--main-fg)]">{row.name}</span>
-                  </span>
-                  <span className="shrink-0 tabular-nums">
-                    {row.wrong_count} 次 · 难度均 {row.avg_difficulty.toFixed(2)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        {!headerCollapsed && reviewToday.length > 0 ? (
-          <div className="mt-3 rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3">
-            <p className="text-[12px] font-semibold text-[var(--main-fg)]">
-              今日建议复习（智能推荐）
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {reviewToday.map((name) => (
-                <span
-                  key={name}
-                  className="rounded-full border border-[var(--border)] bg-white px-2.5 py-0.5 text-[11px] text-[var(--main-fg)]"
-                >
-                  {name}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        {!headerCollapsed && graphTree && Object.keys(graphTree).length > 0 ? (
-          <details className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--main-surface)] px-4 py-3">
-            <summary className="cursor-pointer text-[12px] font-semibold text-[var(--main-fg)]">
-              知识点关系图（基于错题标签拆解）
-            </summary>
-            <div className="mt-3 max-h-[280px] overflow-auto pr-1">
-              <KnowledgeGraphTree data={graphTree} />
-            </div>
-          </details>
-        ) : null}
-      </header>
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full min-h-0">
-          <div className="flex min-h-0 w-[360px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--main-surface)]">
-            <div className="shrink-0 px-6 py-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[13px] font-semibold text-[var(--main-fg)]">
-                  文件
+
+        {summaryOpen ? (
+          <div className="lw-reveal mt-4 grid gap-3 xl:grid-cols-[1.1fr_1fr_1fr]">
+            <SummaryPanel title="薄弱知识点" icon={<BarChart3 className="h-4 w-4" />}>
+              {knowledgeStats?.weak_top5?.length ? (
+                <ul className="space-y-2">
+                  {knowledgeStats.weak_top5.map((row, index) => (
+                    <li key={row.name} className="flex items-center justify-between gap-3 text-[12px]">
+                      <span className="truncate text-[var(--main-fg)]">
+                        {index + 1}. {row.name}
+                      </span>
+                      <span className="shrink-0 text-[var(--main-muted)]">
+                        {row.wrong_count} 次 · 难度 {row.avg_difficulty.toFixed(2)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[12px] leading-6 text-[var(--main-muted)]">
+                  整理错题后会自动沉淀薄弱知识点。
                 </p>
-                <button
-                  type="button"
-                  disabled={!selectedId || busy}
-                  onClick={() => inputRef.current?.click()}
-                  className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
-                >
-                  上传
-                </button>
-                <input
-                  ref={inputRef}
-                  className="hidden"
-                  type="file"
-                  multiple
-                  onChange={(e) => void handleUpload(e.target.files)}
-                />
-              </div>
-              {err ? (
-                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">
-                  {err}
-                </div>
-              ) : null}
-              <p className="mt-2 text-[12px] text-[var(--main-muted)]">
-                保存到 <code className="rounded bg-[var(--chip-bg)] px-1">E:\LearningWeb\data\files</code>
-              </p>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto px-3 pb-4">
-              {fileItems.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[var(--border)] bg-white px-4 py-10 text-center text-[13px] text-[var(--main-muted)]">
-                  暂无文件，点击右上角“上传”
+              )}
+            </SummaryPanel>
+
+            <SummaryPanel title="今日复习" icon={<RefreshCw className="h-4 w-4" />}>
+              {reviewToday.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {reviewToday.map((name) => (
+                    <span
+                      key={name}
+                      className="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1 text-[11px] font-semibold text-[var(--main-fg)]"
+                    >
+                      {name}
+                    </span>
+                  ))}
                 </div>
               ) : (
-                <ul className="flex flex-col gap-1">
-                  {fileItems.map((f) => {
-                    const active = activeFile?.id === f.id;
-                    return (
-                      <li key={f.id}>
-                        <div
-                          className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors ${
-                            active
-                              ? "border-[var(--border-strong)] bg-[var(--chip-bg)]"
-                              : "border-transparent hover:bg-[var(--sidebar-hover)]"
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                            onClick={() => setActiveFile(f)}
-                          >
-                            <span className="inline-flex h-8 w-10 items-center justify-center rounded-md bg-[var(--chip-bg)] text-[11px] font-bold text-[var(--chip-fg)]">
-                              {fileIcon(f.type, f.name)}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[13px] font-medium text-[var(--main-fg)]">
-                                {f.name}
-                              </span>
-                              <span className="mt-0.5 block truncate text-[11px] text-[var(--main-muted)]">
-                                {formatSize(f.size)} · {formatTime(f.uploadedAt)}
-                              </span>
-                            </span>
-                          </button>
-                          {isPdfIndexed(f) ? (
-                            <button
-                              type="button"
-                              className="shrink-0 rounded-md border border-[var(--border)] bg-white px-2 py-1 text-[12px] font-medium text-[var(--main-fg)] hover:bg-[var(--chip-bg)] disabled:opacity-50"
-                              disabled={busy || wqBusy}
-                              title="调用后端 LLM 整理错题"
-                              onClick={() => void handleWrongQuestions(f)}
-                            >
-                              整理错题
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="rounded-md px-2 py-1 text-[12px] text-red-700 hover:bg-red-50 disabled:opacity-50"
-                            disabled={busy}
-                            onClick={() => void handleDeleteFile(f.id)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <p className="text-[12px] leading-6 text-[var(--main-muted)]">
+                  暂无复习推荐，先上传资料并整理错题。
+                </p>
               )}
-            </div>
-          </div>
+            </SummaryPanel>
 
-          <div className="flex min-h-0 flex-1 flex-col">
-            {activeFile && activeIsPdf ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="flex min-h-0 flex-[3] flex-col overflow-hidden">
-                  <PdfPreview
-                    url={activeUrl}
-                    title={activeFile.name}
-                    onRegisterVisionProvider={registerVisionProvider}
+            <SummaryPanel title="知识关系" icon={<FolderOpen className="h-4 w-4" />}>
+              {graphTree && Object.keys(graphTree).length > 0 ? (
+                <details>
+                  <summary className="cursor-pointer text-[12px] font-bold text-[var(--accent)]">
+                    查看知识点结构
+                  </summary>
+                  <div className="mt-3 max-h-[220px] overflow-auto pr-1">
+                    <KnowledgeGraphTree data={graphTree} />
+                  </div>
+                </details>
+              ) : (
+                <p className="text-[12px] leading-6 text-[var(--main-muted)]">
+                  知识图谱会根据错题和报告逐步形成。
+                </p>
+              )}
+            </SummaryPanel>
+          </div>
+        ) : null}
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0">
+          {fileListOpen ? (
+            <aside className="flex min-h-0 w-[382px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--main-surface)]/90 backdrop-blur-xl">
+              <div className="shrink-0 border-b border-[var(--border)] px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[14px] font-black tracking-tight text-[var(--main-fg)]">
+                      资料列表
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[var(--main-muted)]">
+                      {fileItems.length} 个文件 · {filteredFiles.length} 个可见
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFileListOpen(false)}
+                      className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--main-muted)] transition hover:-translate-y-px hover:bg-[var(--chip-bg)]"
+                      title="收起资料列表"
+                    >
+                      <PanelLeftClose className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!selectedId || busy}
+                      onClick={() => inputRef.current?.click()}
+                      className="lw-scan inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3.5 py-2 text-[12px] font-bold text-white shadow-[0_12px_24px_-14px_var(--accent-glow)] transition hover:-translate-y-px hover:opacity-95 disabled:translate-y-0 disabled:opacity-50"
+                    >
+                      <UploadCloud className="h-3.5 w-3.5" />
+                      上传
+                    </button>
+                  </div>
+                  <input
+                    ref={inputRef}
+                    className="hidden"
+                    type="file"
+                    multiple
+                    onChange={(event) => void handleUpload(event.target.files)}
                   />
                 </div>
-                {wqForId === activeFile.id && (wq || wqErr) ? (
-                  <section className="min-h-0 shrink-0 border-t border-[var(--border)] bg-[var(--main-surface)]">
-                    <div className="max-h-[42vh] overflow-auto px-6 py-4">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <h2 className="text-[13px] font-semibold text-[var(--main-fg)]">
-                          错题整理结果
-                        </h2>
-                        {wq ? (
-                          <span className="text-[11px] text-[var(--main-muted)]">
-                            {wq.degraded ? "已降级" : "校验通过"}
-                            {wq.vision_used ? " · 含多模态" : ""} · 尝试轮次{" "}
-                            {wq.retries_used}
-                            {wq.saved_path ? ` · ${wq.saved_path}` : ""}
-                          </span>
-                        ) : null}
-                      </div>
-                      {wqErr ? (
-                        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">
-                          {wqErr}
-                        </div>
-                      ) : wq ? (
-                        <>
-                          <p className="mb-3 text-[12px] leading-relaxed text-[var(--main-muted)]">
-                            {wq.summary}
-                          </p>
-                          {wq.items.length === 0 ? (
-                            <p className="text-[13px] text-[var(--main-muted)]">未识别到题目条目。</p>
-                          ) : (
-                            <>
-                              <div className="mb-3 flex flex-wrap items-center gap-2 text-[12px] text-[var(--main-muted)]">
-                                <span>
-                                  共 {wq.items.length} 题，第 {wqPage + 1}/
-                                  {Math.max(1, Math.ceil(wq.items.length / WQ_PAGE_SIZE))} 页
-                                </span>
-                                <div className="flex gap-1">
-                                  <button
-                                    type="button"
-                                    disabled={wqPage <= 0}
-                                    className="rounded border border-[var(--border)] bg-white px-2 py-0.5 disabled:opacity-40"
-                                    onClick={() => setWqPage((p) => Math.max(0, p - 1))}
-                                  >
-                                    上一页
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      wqPage >=
-                                      Math.ceil(wq.items.length / WQ_PAGE_SIZE) - 1
-                                    }
-                                    className="rounded border border-[var(--border)] bg-white px-2 py-0.5 disabled:opacity-40"
-                                    onClick={() =>
-                                      setWqPage((p) =>
-                                        Math.min(
-                                          Math.max(
-                                            0,
-                                            Math.ceil(wq.items.length / WQ_PAGE_SIZE) - 1,
-                                          ),
-                                          p + 1,
-                                        ),
-                                      )
-                                    }
-                                  >
-                                    下一页
-                                  </button>
-                                </div>
-                              </div>
-                              <ul className="flex flex-col gap-2">
-                                {wq.items
-                                  .slice(
-                                    wqPage * WQ_PAGE_SIZE,
-                                    wqPage * WQ_PAGE_SIZE + WQ_PAGE_SIZE,
-                                  )
-                                  .map((it, idx) => (
-                                    <li key={`${wqPage}-${idx}`}>
-                                      <details className="group rounded-lg border border-[var(--border)] bg-white open:border-[var(--border-strong)]">
-                                        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 px-3 py-2 text-[13px] font-medium text-[var(--main-fg)] marker:content-none [&::-webkit-details-marker]:hidden">
-                                          <span className="mr-2 text-[var(--main-muted)]">
-                                            #{wqPage * WQ_PAGE_SIZE + idx + 1}
-                                          </span>
-                                          <span className="min-w-0 flex-1 line-clamp-1">
-                                            {it.question}
-                                          </span>
-                                          <span className="shrink-0 text-[11px] font-normal text-[var(--main-muted)]">
-                                            第 {it.source_page} 页 ·{" "}
-                                            {difficultyLabel(it.difficulty)}
-                                          </span>
-                                          {it.item_id ? (
-                                            <Link
-                                              href={`/wrong/${it.item_id}`}
-                                              className="shrink-0 text-[11px] font-semibold text-[var(--accent)] hover:underline"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              详情页
-                                            </Link>
-                                          ) : null}
-                                        </summary>
-                                        <div className="space-y-2 border-t border-[var(--border)] px-3 py-3 text-[12px] leading-relaxed">
-                                          <p>
-                                            <span className="font-semibold text-[var(--main-fg)]">
-                                              知识点：
-                                            </span>{" "}
-                                            {it.knowledge_point}
-                                          </p>
-                                          <p>
-                                            <span className="font-semibold text-[var(--main-fg)]">
-                                              答案：
-                                            </span>{" "}
-                                            {it.answer || "—"}
-                                          </p>
-                                          <p className="text-[var(--main-muted)]">
-                                            <span className="font-semibold text-[var(--main-fg)]">
-                                              解析：
-                                            </span>{" "}
-                                            {it.analysis}
-                                          </p>
-                                          {it.related_image_paths?.length ? (
-                                            <p className="break-all text-[11px] text-[var(--main-muted)]">
-                                              <span className="font-semibold text-[var(--main-fg)]">
-                                                关联图片：
-                                              </span>{" "}
-                                              {it.related_image_paths.join("；")}
-                                            </p>
-                                          ) : null}
-                                        </div>
-                                      </details>
-                                    </li>
-                                  ))}
-                              </ul>
-                            </>
-                          )}
-                        </>
-                      ) : null}
-                    </div>
-                  </section>
+
+                {error ? (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">
+                    {error}
+                  </div>
                 ) : null}
+                {notice ? (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
+                    {notice}
+                  </div>
+                ) : null}
+
+                <div className="mt-3 space-y-2">
+                  <label className="flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-[13px] text-[var(--main-muted)] shadow-[var(--shadow-sm)] focus-within:border-[var(--accent)]/60 focus-within:ring-2 focus-within:ring-[var(--accent-soft)]">
+                    <Search className="h-4 w-4" />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="搜索文件名或类型"
+                      className="min-w-0 flex-1 bg-transparent text-[var(--main-fg)] outline-none placeholder:text-[var(--main-muted)]"
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-3 gap-1 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-1 shadow-[var(--shadow-sm)]">
+                    {[
+                      ["all", "全部"],
+                      ["pdf", "PDF"],
+                      ["other", "其他"],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setFileKind(value as "all" | "pdf" | "other")}
+                        className={`rounded-md px-2 py-1.5 text-[12px] font-bold transition ${
+                          fileKind === value
+                            ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                            : "text-[var(--main-muted)] hover:bg-[var(--chip-bg)] hover:text-[var(--main-fg)]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
+
+              <div className="lw-scroll-fade min-h-0 flex-1 overflow-auto px-3 py-3">
+                {fileItems.length === 0 ? (
+                  <EmptyState text="当前文件夹暂无资料，点击上方“上传”开始整理。" />
+                ) : filteredFiles.length === 0 ? (
+                  <EmptyState text="没有匹配的文件，可以清空搜索或切换筛选条件。" />
+                ) : (
+                  <ul className="flex flex-col gap-2">
+                    {filteredFiles.map((file) => {
+                      const active = activeFile?.id === file.id;
+                      const generatedReport = isGeneratedReport(file);
+                      return (
+                        <li key={file.id}>
+                          <div
+                            className={`rounded-lg border p-3 transition duration-300 ${
+                              active
+                                ? "lw-active-frame border-[var(--accent)]/35 bg-[var(--accent-soft)] shadow-[var(--shadow-card)]"
+                                : "border-transparent bg-[var(--card-bg)] hover:-translate-y-px hover:border-[var(--border)] hover:shadow-[var(--shadow-sm)]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                                onClick={() => setActiveFile(file)}
+                              >
+                                <span className="grid h-11 w-12 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--main-bg)] text-[11px] font-black text-[var(--accent)] shadow-inner">
+                                  {fileBadge(file)}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13px] font-black text-[var(--main-fg)]">
+                                    {file.name}
+                                  </span>
+                                  <span className="mt-1 block truncate text-[11px] text-[var(--main-muted)]">
+                                    {formatSize(file.size)} · {formatTime(file.uploadedAt)}
+                                  </span>
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                className="rounded-lg p-2 text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                                disabled={busy}
+                                onClick={() => void handleDeleteFile(file.id)}
+                                title="删除文件"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+
+                            {isPdfFile(file) && !generatedReport ? (
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <ReportButton
+                                  disabled={busy || Boolean(reportBusy)}
+                                  active={reportBusy?.fileId === file.id && reportBusy.type === "wrong"}
+                                  onClick={() => openReportDialog(file, "wrong")}
+                                >
+                                  整理错题
+                                </ReportButton>
+                                <ReportButton
+                                  accent
+                                  disabled={busy || Boolean(reportBusy)}
+                                  active={
+                                    reportBusy?.fileId === file.id && reportBusy.type === "knowledge"
+                                  }
+                                  onClick={() => openReportDialog(file, "knowledge")}
+                                >
+                                  整理知识点
+                                </ReportButton>
+                              </div>
+                            ) : generatedReport ? (
+                              <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--main-bg)] px-3 py-2 text-[11px] font-semibold text-[var(--main-muted)]">
+                                已生成报告，可直接预览或删除。
+                              </div>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </aside>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setFileListOpen(true)}
+              className="flex w-[46px] shrink-0 flex-col items-center justify-start gap-2 border-r border-[var(--border)] bg-[var(--main-surface)] px-2 py-4 text-[11px] font-semibold text-[var(--main-muted)] transition hover:bg-[var(--card-bg)]"
+              title="展开资料列表"
+            >
+              <PanelLeftOpen className="h-5 w-5" />
+              <span className="[writing-mode:vertical-rl]">资料列表</span>
+            </button>
+          )}
+
+          <section className="flex min-h-0 flex-1 flex-col bg-[var(--main-bg)]">
+            {activeFile && activeIsPdf ? (
+              <PdfPreview
+                url={activeUrl}
+                title={activeFile.name}
+                onRegisterVisionProvider={registerVisionProvider}
+              />
             ) : (
               <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
-                <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--main-surface)] px-6 py-10 text-center text-[13px] text-[var(--main-muted)]">
-                  {activeFile
-                    ? "该文件暂不支持预览（当前仅实现 PDF.js 预览）"
-                    : "从左侧列表选择一个文件预览（PDF 优先）"}
-                </div>
-
-                <div className="mt-8">
-                  <p className="mb-3 text-[13px] font-semibold text-[var(--main-fg)]">
-                    资料卡片（mock）
-                  </p>
-                  {files.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--main-surface)] px-6 py-12 text-center text-[13px] text-[var(--main-muted)]">
-                      此文件夹暂无内容
-                    </div>
-                  ) : (
-                    <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
-                      {files.map((file) => (
-                        <li key={file.id}>
-                          <button
-                            type="button"
-                            className="group flex h-full w-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-4 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all hover:border-[var(--border-strong)] hover:shadow-[0_4px_14px_rgba(15,23,42,0.08)]"
-                          >
-                            <span className="mb-2 inline-flex w-fit rounded-md bg-[var(--chip-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--chip-fg)]">
-                              {kindLabel[file.kind]}
-                            </span>
-                            <span className="line-clamp-2 text-[15px] font-medium leading-snug text-[var(--main-fg)] group-hover:text-[var(--accent)]">
-                              {file.title}
-                            </span>
-                            <span className="mt-2 line-clamp-2 flex-1 text-[13px] leading-relaxed text-[var(--main-muted)]">
-                              {file.preview}
-                            </span>
-                            <span className="mt-3 text-[12px] text-[var(--main-muted)]">
-                              更新于 {file.updatedAt}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                <EmptyPreview activeFile={activeFile} files={files} />
               </div>
             )}
+          </section>
+        </div>
+      </div>
+
+      {reportDraft ? (
+        <ReportDestinationDialog
+          draft={reportDraft}
+          folders={folderOptions}
+          targetFolderId={targetFolderId}
+          newFolderName={newFolderName}
+          newFolderParentId={newFolderParentId}
+          busy={Boolean(reportBusy)}
+          onTargetFolderChange={setTargetFolderId}
+          onNewFolderNameChange={setNewFolderName}
+          onNewFolderParentChange={setNewFolderParentId}
+          onClose={() => setReportDraft(null)}
+          onSubmit={() => void submitReport()}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryPanel({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="lw-panel rounded-lg p-4">
+      <div className="mb-3 flex items-center gap-2 text-[13px] font-black text-[var(--main-fg)]">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+          {icon}
+        </span>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ReportButton({
+  children,
+  active,
+  accent,
+  disabled,
+  onClick,
+}: {
+  children: ReactNode;
+  active: boolean;
+  accent?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-9 items-center justify-center rounded-lg border px-3 py-2 text-[12px] font-black shadow-[var(--shadow-sm)] transition hover:-translate-y-px disabled:translate-y-0 disabled:opacity-50 ${
+        accent
+          ? "border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent)]"
+          : "border-[var(--border)] bg-[var(--card-bg)] text-[var(--main-fg)] hover:bg-[var(--chip-bg)]"
+      }`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {active ? "生成中..." : children}
+    </button>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--card-bg)] px-4 py-12 text-center text-[13px] leading-relaxed text-[var(--main-muted)]">
+      {text}
+    </div>
+  );
+}
+
+function EmptyPreview({
+  activeFile,
+  files,
+}: {
+  activeFile: IndexedFileItem | null;
+  files: MockFileItem[];
+}) {
+  return (
+    <>
+      <div className="lw-panel grid min-h-[360px] place-items-center rounded-lg border-dashed px-6 py-14 text-center text-[13px] leading-relaxed text-[var(--main-muted)]">
+        <div>
+          <FileText className="mx-auto mb-4 h-10 w-10 text-[var(--accent)]" />
+          <p className="text-[15px] font-black text-[var(--main-fg)]">
+            {activeFile ? "暂不支持预览该文件" : "选择一个 PDF 开始阅读"}
+          </p>
+          <p className="mt-2 max-w-md">
+            {activeFile
+              ? "当前预览区优先支持 PDF。其他文件可以继续保存在资料库中。"
+              : "从左侧资料列表选择 PDF，或上传新的课程资料。"}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <p className="mb-3 text-[13px] font-black text-[var(--main-fg)]">示例资料卡片</p>
+        {files.length === 0 ? (
+          <EmptyState text="当前文件夹暂无示例资料。" />
+        ) : (
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+            {files.map((file) => (
+              <li key={file.id}>
+                <div className="flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-4 text-left shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:shadow-[var(--shadow-card)]">
+                  <span className="mb-3 inline-flex w-fit rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-black text-[var(--accent)]">
+                    {readableKindLabel(file.kind)}
+                  </span>
+                  <span className="line-clamp-2 text-[15px] font-black leading-snug text-[var(--main-fg)]">
+                    {file.title}
+                  </span>
+                  <span className="mt-2 line-clamp-2 flex-1 text-[13px] leading-relaxed text-[var(--main-muted)]">
+                    {file.preview}
+                  </span>
+                  <span className="mt-3 text-[12px] text-[var(--main-muted)]">
+                    更新于 {file.updatedAt}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <SmallStep icon={<UploadCloud className="h-4 w-4" />} title="上传资料" />
+        <SmallStep icon={<BookOpenCheck className="h-4 w-4" />} title="阅读与标记" />
+        <SmallStep icon={<Sparkles className="h-4 w-4" />} title="AI 生成报告" />
+      </div>
+    </>
+  );
+}
+
+function SmallStep({ icon, title }: { icon: ReactNode; title: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 py-3 text-[12px] font-bold text-[var(--main-fg)] shadow-[var(--shadow-sm)]">
+      <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+        {icon}
+      </span>
+      {title}
+    </div>
+  );
+}
+
+function ReportDestinationDialog({
+  draft,
+  folders,
+  targetFolderId,
+  newFolderName,
+  newFolderParentId,
+  busy,
+  onTargetFolderChange,
+  onNewFolderNameChange,
+  onNewFolderParentChange,
+  onClose,
+  onSubmit,
+}: {
+  draft: NonNullable<ReportDraft>;
+  folders: FolderOption[];
+  targetFolderId: string;
+  newFolderName: string;
+  newFolderParentId: string | null;
+  busy: boolean;
+  onTargetFolderChange: (value: string) => void;
+  onNewFolderNameChange: (value: string) => void;
+  onNewFolderParentChange: (value: string | null) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const title = draft.type === "wrong" ? "整理错题" : "整理知识点";
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 backdrop-blur-sm">
+      <div className="lw-panel w-full max-w-[520px] rounded-lg p-5 shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[var(--accent)]">
+              生成报告
+            </p>
+            <h2 className="mt-1 text-xl font-black text-[var(--main-fg)]">{title}</h2>
+            <p className="mt-2 text-[13px] leading-6 text-[var(--main-muted)]">
+              请选择报告生成后放在哪个文件夹。你也可以在已有文件夹下面新建一个目录。
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--main-muted)] hover:bg-[var(--chip-bg)]"
+            title="关闭"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-5 rounded-lg border border-[var(--border)] bg-[var(--main-surface)] px-3 py-3">
+          <p className="truncate text-[13px] font-bold text-[var(--main-fg)]">{draft.file.name}</p>
+          <p className="mt-1 text-[12px] text-[var(--main-muted)]">
+            {formatSize(draft.file.size)} · {formatTime(draft.file.uploadedAt)}
+          </p>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          <label className="block">
+            <span className="text-[12px] font-bold text-[var(--main-fg)]">存放到</span>
+            <select
+              value={targetFolderId}
+              onChange={(event) => onTargetFolderChange(event.target.value)}
+              className="mt-2 h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-[13px] text-[var(--main-fg)] outline-none focus:border-[var(--accent)]"
+            >
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {"　".repeat(folder.depth)}
+                  {folder.label}
+                </option>
+              ))}
+              <option value="__new__">+ 新建文件夹</option>
+            </select>
+          </label>
+
+          {targetFolderId === "__new__" ? (
+            <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--main-surface)] p-3">
+              <label className="block">
+                <span className="text-[12px] font-bold text-[var(--main-fg)]">新文件夹名称</span>
+                <input
+                  value={newFolderName}
+                  onChange={(event) => onNewFolderNameChange(event.target.value)}
+                  className="mt-2 h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-[13px] outline-none focus:border-[var(--accent)]"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[12px] font-bold text-[var(--main-fg)]">创建在</span>
+                <select
+                  value={newFolderParentId ?? ""}
+                  onChange={(event) => onNewFolderParentChange(event.target.value || null)}
+                  className="mt-2 h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-[13px] outline-none focus:border-[var(--accent)]"
+                >
+                  <option value="">根目录</option>
+                  {folders.map((folder) => (
+                    <option key={folder.id} value={folder.id}>
+                      {"　".repeat(folder.depth)}
+                      {folder.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] px-4 py-2 text-[13px] font-bold text-[var(--main-fg)] hover:bg-[var(--chip-bg)]"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={busy || (targetFolderId === "__new__" && !newFolderName.trim())}
+            onClick={onSubmit}
+            className="rounded-xl bg-[var(--accent)] px-5 py-2 text-[13px] font-bold text-white shadow-[0_14px_28px_-18px_var(--accent-glow)] disabled:opacity-50"
+          >
+            开始生成
+          </button>
         </div>
       </div>
     </div>

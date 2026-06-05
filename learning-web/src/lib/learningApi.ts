@@ -1,5 +1,20 @@
 import { apiBase } from "./apiBase";
 
+export type ApiHealth = {
+  ok: boolean;
+  service: string;
+  data_root: string;
+  files_count: number;
+  api_key_configured: boolean;
+  max_upload_mb: number;
+};
+
+export async function getApiHealth(): Promise<ApiHealth> {
+  const res = await fetch(`${apiBase()}/api/health`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`health: HTTP ${res.status}`);
+  return (await res.json()) as ApiHealth;
+}
+
 export type ReviewRecommendResponse = {
   ok: boolean;
   today: string[];

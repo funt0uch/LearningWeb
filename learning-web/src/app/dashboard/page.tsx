@@ -7,7 +7,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   Line,
   LineChart,
   Pie,
@@ -23,38 +22,37 @@ import {
   getWeeklyReport,
   type DashboardOverview,
 } from "@/lib/learningApi";
+import { Activity, Brain, CalendarDays, FileText, RefreshCw, Target } from "lucide-react";
 
-const PIE_COLORS = [
-  "#2383e2",
-  "#0d8f6e",
-  "#c9781a",
-  "#9b51e0",
-  "#e05555",
-  "#5c6578",
-  "#2d6a4f",
-  "#9d4edd",
-];
+const PIE_COLORS = ["#0f8f99", "#1a7ad1", "#16a34a", "#f59e0b", "#ef4444", "#64748b"];
 
 function StatCard({
   title,
   value,
   sub,
+  icon,
 }: {
   title: string;
   value: string;
   sub?: string;
+  icon: React.ReactNode;
 }) {
   return (
-    <div className="group rounded-2xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-card)] transition-all duration-300 hover:shadow-[var(--shadow-card-hover)]">
-      <p className="text-[12px] font-medium uppercase tracking-wide text-[var(--main-muted)]">
-        {title}
-      </p>
-      <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight text-[var(--main-fg)]">
-        {value}
-      </p>
-      {sub ? (
-        <p className="mt-1 text-[12px] text-[var(--main-muted)]">{sub}</p>
-      ) : null}
+    <div className="lw-panel rounded-lg p-5 transition hover:-translate-y-px hover:shadow-[var(--shadow-card)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black uppercase tracking-wide text-[var(--main-muted)]">
+            {title}
+          </p>
+          <p className="mt-2 text-2xl font-black tabular-nums tracking-tight text-[var(--main-fg)]">
+            {value}
+          </p>
+          {sub ? <p className="mt-1 text-[12px] text-[var(--main-muted)]">{sub}</p> : null}
+        </div>
+        <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+          {icon}
+        </span>
+      </div>
     </div>
   );
 }
@@ -64,17 +62,18 @@ export default function DashboardPage() {
   const [err, setErr] = useState<string | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
-  const [rec, setRec] = useState<string[]>([]);
+  const [recommendations, setRecommendations] = useState<string[]>([]);
 
   useEffect(() => {
     void (async () => {
       try {
-        const d = await getDashboardOverview();
-        setData(d);
-        const rv = await getReviewRecommendations(6);
-        setRec(rv.today ?? []);
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : "加载失败");
+        const overview = await getDashboardOverview();
+        setData(overview);
+        const review = await getReviewRecommendations(6);
+        setRecommendations(review.today ?? []);
+        setErr(null);
+      } catch (error) {
+        setErr(error instanceof Error ? error.message : "数据加载失败");
       }
     })();
   }, []);
@@ -83,10 +82,10 @@ export default function DashboardPage() {
     setReportBusy(true);
     setReport(null);
     try {
-      const r = await getWeeklyReport();
-      setReport(r.report);
-    } catch (e) {
-      setReport(e instanceof Error ? e.message : "生成失败");
+      const result = await getWeeklyReport();
+      setReport(result.report);
+    } catch (error) {
+      setReport(error instanceof Error ? error.message : "周报生成失败");
     } finally {
       setReportBusy(false);
     }
@@ -96,173 +95,170 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[var(--shell-bg)] text-[var(--main-fg)]">
       <TopNav title="学习数据看板" />
 
-      <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+      <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+        <section className="lw-active-frame lw-panel rounded-lg px-6 py-6">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.18em] text-[var(--accent)]">
+                Dashboard
+              </p>
+              <h1 className="mt-2 text-2xl font-black tracking-tight">学习数据一览</h1>
+              <p className="mt-2 max-w-2xl text-[13px] leading-7 text-[var(--main-muted)]">
+                汇总学习时长、错题数量、知识点分布和复习建议，让下一次复习更有方向。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadReport}
+              disabled={reportBusy}
+              className="lw-scan inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-5 py-3 text-sm font-bold text-white shadow-[0_18px_32px_-18px_var(--accent-glow)] transition hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${reportBusy ? "animate-spin" : ""}`} />
+              {reportBusy ? "生成中..." : "生成学习周报"}
+            </button>
+          </div>
+        </section>
+
         {err ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800 shadow-[var(--shadow-sm)]">
             {err}
           </div>
         ) : null}
 
         {data ? (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 title="本周学习时长"
                 value={`${data.weekly_study_minutes} 分钟`}
-                sub="按 session 上报汇总（近 7 日）"
+                sub="近 7 日学习记录汇总"
+                icon={<CalendarDays className="h-5 w-5" />}
               />
               <StatCard
-                title="累计错题（条目）"
+                title="累计错题"
                 value={`${data.cumulative_wrong_total}`}
-                sub="来自错题整理 JSON 聚合"
+                sub="来自错题整理结果"
+                icon={<FileText className="h-5 w-5" />}
               />
               <StatCard
                 title="复习参与度"
                 value={`${data.review_engagement_percent}%`}
-                sub="结合浏览/对话与推荐维度的启发式指标"
+                sub="结合浏览、对话与推荐"
+                icon={<Activity className="h-5 w-5" />}
               />
               <StatCard
                 title="练习平均得分"
                 value={
-                  data.practice_accuracy_percent != null
-                    ? `${data.practice_accuracy_percent}`
-                    : "—"
+                  data.practice_accuracy_percent == null
+                    ? "--"
+                    : `${data.practice_accuracy_percent}%`
                 }
-                sub={
-                  data.practice_samples > 0
-                    ? `基于 ${data.practice_samples} 次批改`
-                    : "暂无再练批改数据"
-                }
+                sub={data.practice_samples > 0 ? `${data.practice_samples} 次练习样本` : "暂无再练习数据"}
+                icon={<Target className="h-5 w-5" />}
               />
-            </div>
+            </section>
 
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-[var(--border)] bg-white p-6 shadow-[var(--shadow-card)]">
-                <h2 className="text-[15px] font-semibold">近 7 日学习时长（分钟）</h2>
-                <div className="mt-4 h-[280px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={data.daily_study_trend}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e8e7e4" />
-                      <XAxis
-                        dataKey="day"
-                        tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => (v as string).slice(5)}
-                      />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <Tooltip />
-                      <Line
-                        type="monotone"
-                        dataKey="minutes"
-                        stroke="#2383e2"
-                        strokeWidth={2}
-                        dot={{ r: 4 }}
-                        activeDot={{ r: 6 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
+            <section className="grid gap-6 lg:grid-cols-2">
+              <ChartCard title="近 7 日学习时长">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={data.daily_study_trend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="day" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Line
+                      type="monotone"
+                      dataKey="minutes"
+                      stroke="#0f8f99"
+                      strokeWidth={2}
+                      dot={{ r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="知识点错题分布">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.knowledge_bar}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="name" interval={0} angle={-22} textAnchor="end" height={76} tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#0f8f99" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </section>
+
+            <section className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+              <ChartCard title="知识点占比">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={data.knowledge_pie}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={98}
+                      label={({ name, percent }) => `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                    >
+                      {data.knowledge_pie.map((_, index) => (
+                        <Cell key={index} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <div className="lw-panel rounded-lg p-6">
+                <div className="flex items-center gap-2">
+                  <Brain className="h-5 w-5 text-[var(--accent)]" />
+                  <h2 className="text-[15px] font-black">今日复习建议</h2>
+                </div>
+                <div className="mt-5 space-y-3">
+                  {(recommendations.length
+                    ? recommendations
+                    : ["先整理一份 PDF 错题，系统会自动生成薄弱知识点建议。"]
+                  ).map((item, index) => (
+                    <div
+                      key={`${item}-${index}`}
+                      className="rounded-lg border border-[var(--border)] bg-[var(--main-surface)] px-4 py-3 text-sm leading-6 text-[var(--main-fg)]"
+                    >
+                      <span className="mr-2 font-black text-[var(--accent)]">{index + 1}.</span>
+                      {item}
+                    </div>
+                  ))}
                 </div>
               </div>
+            </section>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-white p-6 shadow-[var(--shadow-card)]">
-                <h2 className="text-[15px] font-semibold">知识点错题分布（Top）</h2>
-                <div className="mt-4 h-[280px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.knowledge_bar}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e8e7e4" />
-                      <XAxis dataKey="name" interval={0} angle={-25} textAnchor="end" height={80} tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#2383e2" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-[var(--border)] bg-white p-6 shadow-[var(--shadow-card)]">
-                <h2 className="text-[15px] font-semibold">知识点占比（饼图）</h2>
-                <div className="mt-4 h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={data.knowledge_pie}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={100}
-                        label={({
-                          name,
-                          percent,
-                        }: {
-                          name?: string;
-                          percent?: number;
-                        }) =>
-                          `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`
-                        }
-                      >
-                        {data.knowledge_pie.map((_, i) => (
-                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-[var(--border)] bg-white p-6 shadow-[var(--shadow-card)]">
-                <h2 className="text-[15px] font-semibold">本周推荐复习（来自推荐引擎）</h2>
-                <ul className="mt-4 space-y-2">
-                  {rec.length ? (
-                    rec.map((x) => (
-                      <li
-                        key={x}
-                        className="rounded-xl border border-[var(--border)] bg-[var(--chip-bg)] px-3 py-2 text-[13px]"
-                      >
-                        {x}
-                      </li>
-                    ))
-                  ) : (
-                    <li className="text-[13px] text-[var(--main-muted)]">暂无推荐数据</li>
-                  )}
-                </ul>
-                <p className="mt-3 text-[11px] text-[var(--main-muted)]">
-                  活动：本周浏览 {data.week_activity?.views ?? 0} · 对话{" "}
-                  {data.week_activity?.chats ?? 0}
-                </p>
-              </div>
-            </div>
-
-            <section className="rounded-2xl border border-[var(--border)] bg-gradient-to-br from-white to-[var(--chip-bg)] p-6 shadow-[var(--shadow-card)]">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-[15px] font-semibold">学习周报（LLM 自动生成）</h2>
-                <button
-                  type="button"
-                  disabled={reportBusy}
-                  className="rounded-xl bg-[var(--accent)] px-4 py-2 text-[13px] font-semibold text-white shadow-md transition hover:opacity-95 disabled:opacity-50"
-                  onClick={() => void loadReport()}
-                >
-                  {reportBusy ? "生成中…" : "生成本周周报"}
-                </button>
-              </div>
-              {report ? (
-                <pre className="mt-4 whitespace-pre-wrap rounded-xl bg-white/80 p-4 text-[13px] leading-relaxed text-[var(--main-fg)] shadow-inner">
+            {report ? (
+              <section className="lw-panel rounded-lg p-6">
+                <h2 className="text-[15px] font-black">AI 学习周报</h2>
+                <pre className="mt-4 whitespace-pre-wrap rounded-xl bg-slate-950 p-5 text-[13px] leading-7 text-slate-50">
                   {report}
                 </pre>
-              ) : (
-                <p className="mt-3 text-[13px] text-[var(--main-muted)]">
-                  点击按钮拉取周报（需后端 LLM；失败时使用模板文本）。
-                </p>
-              )}
-            </section>
+              </section>
+            ) : null}
           </>
         ) : !err ? (
-          <p className="text-[13px] text-[var(--main-muted)]">正在加载看板数据…</p>
+          <div className="lw-panel rounded-lg p-8 text-sm text-[var(--main-muted)]">
+            正在加载学习数据...
+          </div>
         ) : null}
       </main>
+    </div>
+  );
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="lw-panel rounded-lg p-6">
+      <h2 className="text-[15px] font-black tracking-tight">{title}</h2>
+      <div className="mt-4 h-[290px]">{children}</div>
     </div>
   );
 }

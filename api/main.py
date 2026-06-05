@@ -11,18 +11,33 @@ import uuid
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-DATA_ROOT = Path(r"E:\LearningWeb\data")
+DATA_ROOT = Path(os.getenv("LEARNINGWEB_DATA_ROOT", r"E:\LearningWeb\data")).resolve()
 SUBDIRS = ("folders", "files", "generated", "temp")
 FOLDERS_FILE = DATA_ROOT / "folders.json"
 FILES_INDEX_FILE = DATA_ROOT / "files_index.json"
 FILES_DIR = DATA_ROOT / "files"
+MAX_UPLOAD_BYTES = int(os.getenv("LEARNINGWEB_MAX_UPLOAD_MB", "80")) * 1024 * 1024
+ALLOWED_UPLOAD_SUFFIXES = {
+    ".pdf",
+    ".txt",
+    ".md",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".csv",
+    ".json",
+    ".png",
+    ".jpg",
+    ".jpeg",
+}
 
 _log = logging.getLogger(__name__)
 
@@ -97,7 +112,17 @@ def _save_files_index(doc: dict[str, Any]) -> None:
     FILES_INDEX_FILE.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_folders_state() -> dict[str, Any]:
+    ensure_layout()
+    return _load_json_file(FOLDERS_FILE)
+
+
+def _save_folders_state(doc: dict[str, Any]) -> None:
+    FOLDERS_FILE.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 _FILENAME_RE = re.compile(r'[^0-9A-Za-z\u4e00-\u9fff\.\-\_\(\)\s]+')
+_FOLDER_ID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_.-]{0,80}$")
 
 
 def _sanitize_filename(name: str) -> str:
@@ -106,6 +131,44 @@ def _sanitize_filename(name: str) -> str:
     # 防止隐藏/空文件名
     name = name.lstrip(".") or "unnamed"
     return name[:180]
+
+
+def _sanitize_folder_id(folder_id: str) -> str:
+    folder_id = (folder_id or "").strip()
+    if not _FOLDER_ID_RE.fullmatch(folder_id):
+        raise HTTPException(status_code=400, detail="folder_id is invalid")
+    return folder_id
+
+
+def _assert_under(base: Path, path: Path) -> None:
+    try:
+        path.resolve().relative_to(base.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="path is outside allowed data directory") from exc
+
+
+def _ensure_folder_node(folder_id: str, label: str) -> None:
+    state = _load_folders_state()
+    tree = state.setdefault("tree", [])
+    if not isinstance(tree, list):
+        tree = []
+        state["tree"] = tree
+
+    def has_node(nodes: list[dict[str, Any]]) -> bool:
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            if node.get("id") == folder_id:
+                node["label"] = label
+                return True
+            children = node.get("children")
+            if isinstance(children, list) and has_node(children):
+                return True
+        return False
+
+    if not has_node(tree):
+        tree.append({"id": folder_id, "label": label})
+    _save_folders_state(state)
 
 
 def _now_iso() -> str:
@@ -130,6 +193,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/health")
+def api_health() -> dict[str, Any]:
+    ensure_layout()
+    idx = _load_files_index()
+    return {
+        "ok": True,
+        "service": "LearningWeb API",
+        "data_root": str(DATA_ROOT),
+        "files_count": len(list(idx.get("files", []))),
+        "api_key_configured": bool(
+            (os.environ.get("ARK_API_KEY") or os.environ.get("DOUBAO_API_KEY") or "").strip()
+        ),
+        "max_upload_mb": MAX_UPLOAD_BYTES // 1024 // 1024,
+    }
 
 
 @app.get("/api/folders-state")
@@ -174,11 +253,16 @@ async def upload_file(
     上传文件到 E:\\LearningWeb\\data\\files\\{folder_id}\\ 下，并写入 files_index.json。
     """
     ensure_layout()
-    if not folder_id:
-        raise HTTPException(status_code=400, detail="folder_id is required")
+    folder_id = _sanitize_folder_id(folder_id)
 
     safe_name = _sanitize_filename(file.filename or "unnamed")
+    suffix = Path(safe_name).suffix.lower()
+    if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+        allowed = ", ".join(sorted(ALLOWED_UPLOAD_SUFFIXES))
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型：{suffix or '无扩展名'}；允许：{allowed}")
+
     folder_dir = FILES_DIR / folder_id
+    _assert_under(FILES_DIR, folder_dir)
     folder_dir.mkdir(parents=True, exist_ok=True)
 
     file_id = uuid.uuid4().hex
@@ -196,6 +280,11 @@ async def upload_file(
             i += 1
 
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大，当前上限为 {MAX_UPLOAD_BYTES // 1024 // 1024} MB",
+        )
     dest.write_bytes(content)
 
     mime = file.content_type or mimetypes.guess_type(dest.name)[0] or "application/octet-stream"
@@ -219,6 +308,7 @@ async def upload_file(
 @app.get("/api/files/{folder_id}")
 def list_files(folder_id: str) -> list[dict[str, Any]]:
     ensure_layout()
+    folder_id = _sanitize_folder_id(folder_id)
     idx = _load_files_index()
     return [f for f in list(idx.get("files", [])) if f.get("folderId") == folder_id]
 
@@ -232,6 +322,7 @@ def download_file(file_id: str):
     if not hit:
         raise HTTPException(status_code=404, detail="file not found")
     path = Path(str(hit.get("path", "")))
+    _assert_under(FILES_DIR, path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="file missing on disk")
     media_type = str(hit.get("type") or "application/octet-stream")
@@ -241,6 +332,13 @@ def download_file(file_id: str):
 class WrongQuestionsFromPdfBody(BaseModel):
     file_id: str | None = None
     path: str | None = None
+
+
+class PdfReportBody(BaseModel):
+    file_id: str
+    report_type: Literal["wrong", "knowledge"]
+    target_folder_id: str | None = None
+    target_label: str | None = None
 
 
 def _resolve_task_pdf_path(body: WrongQuestionsFromPdfBody) -> Path:
@@ -498,6 +596,60 @@ async def wrong_questions_from_pdf(body: WrongQuestionsFromPdfBody) -> dict[str,
     }
 
 
+@app.post("/api/tasks/pdf-report")
+async def api_generate_pdf_report(body: PdfReportBody) -> dict[str, Any]:
+    from services.tasks.pdf_report_service import REPORT_FOLDER_LABELS, generate_pdf_report
+
+    report_folders: dict[str, str] = {
+        "wrong": "mistakes",
+        "knowledge": "knowledge-summary",
+    }
+
+    source = _resolve_task_pdf_path(WrongQuestionsFromPdfBody(file_id=body.file_id))
+    target_folder_id = _sanitize_folder_id(body.target_folder_id or report_folders[body.report_type])
+    target_label = (body.target_label or REPORT_FOLDER_LABELS[body.report_type]).strip()
+    target_dir = FILES_DIR / target_folder_id
+    _assert_under(FILES_DIR, target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_folder_node(target_folder_id, target_label)
+
+    try:
+        report = await generate_pdf_report(
+            source_path=source,
+            target_dir=target_dir,
+            report_type=body.report_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        _log.exception("pdf report generation failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    entry = {
+        "id": uuid.uuid4().hex,
+        "name": report.name,
+        "path": str(report.path),
+        "type": report.mime,
+        "size": report.size,
+        "uploadedAt": _now_iso(),
+        "folderId": target_folder_id,
+        "sourceFileId": body.file_id,
+        "generatedBy": f"pdf-report:{body.report_type}",
+    }
+    idx = _load_files_index()
+    idx["files"] = [entry, *list(idx.get("files", []))]
+    _save_files_index(idx)
+    return {
+        "ok": True,
+        "report_type": body.report_type,
+        "target_folder_id": target_folder_id,
+        "target_label": target_label,
+        "file": entry,
+    }
+
+
 @app.delete("/api/file/{file_id}")
 def delete_file(file_id: str) -> dict[str, bool]:
     ensure_layout()
@@ -508,6 +660,7 @@ def delete_file(file_id: str) -> dict[str, bool]:
         raise HTTPException(status_code=404, detail="file not found")
 
     path = Path(str(hit.get("path", "")))
+    _assert_under(FILES_DIR, path)
     if path.is_file():
         path.unlink(missing_ok=True)  # py>=3.8
 

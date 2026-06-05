@@ -1,267 +1,265 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, ChevronRight, Loader2, MessageCircle, Send, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Bot,
+  ChevronRight,
+  Loader2,
+  MessageCircle,
+  Paperclip,
+  Send,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { postChat } from "@/lib/filesApi";
 
 type Bubble = { role: "user" | "assistant"; text: string };
+type VisionProvider = () => { title: string; page: number; pageCount: number; dataUrl: string } | null;
 
 const STORAGE_KEY = "learningweb.agent.bubbles.v1";
 const MAX_BUBBLES = 120;
+
+const WELCOME: Bubble = {
+  role: "assistant",
+  text: "你好，我是 LearningWeb 学习助手。打开 PDF 后，我可以结合当前页解释题目、总结知识点，或者继续生成相似练习。",
+};
+
+const PROMPTS = [
+  "这一页的核心知识点是什么？",
+  "这道题最容易错在哪里？",
+  "把这一页整理成复习提纲",
+  "基于当前内容出两道相似题",
+  "这类题的通用解题步骤是什么？",
+  "帮我归纳本页公式和适用条件",
+];
 
 export function AgentPanel({
   pdfVisionProvider,
   onToggleCollapse,
 }: {
-  pdfVisionProvider?: (() => { title: string; page: number; pageCount: number; dataUrl: string } | null) | null;
+  pdfVisionProvider?: VisionProvider | null;
   onToggleCollapse?: () => void;
 }) {
+  const initialBubbles = useMemo<Bubble[]>(() => [WELCOME], []);
   const [message, setMessage] = useState("");
-  const initialBubbles = useMemo<Bubble[]>(
-    () => [
-      {
-        role: "assistant",
-        text: "你好。我可以帮你：解释错题、总结知识点、再出相似练习题。直接输入问题，或选用下方快捷意图。",
-      },
-    ],
-    [],
-  );
   const [bubbles, setBubbles] = useState<Bubble[]>(initialBubbles);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [attachPdfPage, setAttachPdfPage] = useState(true);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // 恢复对话记录
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as { bubbles?: Bubble[] };
-      if (Array.isArray(parsed?.bubbles) && parsed.bubbles.length) {
-        const safe = parsed.bubbles
-          .filter(
-            (b) =>
-              b &&
-              (b.role === "user" || b.role === "assistant") &&
-              typeof b.text === "string",
-          )
-          .slice(-MAX_BUBBLES);
-        if (safe.length) setBubbles(safe);
-      }
+      const safe = parsed.bubbles
+        ?.filter(
+          (item) =>
+            item &&
+            (item.role === "user" || item.role === "assistant") &&
+            typeof item.text === "string",
+        )
+        .slice(-MAX_BUBBLES);
+      if (safe?.length) setBubbles(safe);
     } catch {
-      // ignore
+      // Local chat history is optional.
     }
   }, []);
 
-  // 持久化对话记录（防抖）
   useEffect(() => {
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       try {
-        const safe = bubbles.slice(-MAX_BUBBLES);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ bubbles: safe }));
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ bubbles: bubbles.slice(-MAX_BUBBLES) }),
+        );
       } catch {
-        // ignore quota errors
+        // Ignore quota errors.
       }
     }, 250);
-    return () => window.clearTimeout(t);
+    return () => window.clearTimeout(timer);
   }, [bubbles]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [bubbles, busy, error]);
 
   const clearHistory = useCallback(() => {
     setBubbles(initialBubbles);
-    setErr(null);
+    setError(null);
     setMessage("");
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
-      // ignore
+      // Ignore.
     }
   }, [initialBubbles]);
 
   const send = useCallback(
     async (text: string, mode?: "explain" | "summarize" | "similar" | "free") => {
-      const t = text.trim();
-      if (!t || busy) return;
+      const trimmed = text.trim();
+      if (!trimmed || busy) return;
+
       setBusy(true);
-      setErr(null);
-      setBubbles((prev) => [...prev, { role: "user" as const, text: t }].slice(-MAX_BUBBLES));
+      setError(null);
+      setBubbles((prev) =>
+        [...prev, { role: "user" as const, text: trimmed }].slice(-MAX_BUBBLES),
+      );
+
       try {
-        const providerFn = typeof pdfVisionProvider === "function" ? pdfVisionProvider : null;
-        const shouldUseVision = attachPdfPage && Boolean(providerFn);
-        const vision = shouldUseVision ? providerFn?.() ?? null : null;
-        const image_urls = vision ? [vision.dataUrl] : undefined;
+        const vision = attachPdfPage && pdfVisionProvider ? pdfVisionProvider() : null;
         const prefix = vision
-          ? `【PDF 当前页】文件：${vision.title}；第 ${vision.page}/${vision.pageCount} 页。请结合图片回答。\n\n`
+          ? `【PDF 当前页】文件：${vision.title}；第 ${vision.page}/${vision.pageCount} 页。请结合图片内容回答。\n\n`
           : "";
-        const r = await postChat({ message: prefix + t, mode, image_urls });
-        setBubbles((prev) => [
-          ...prev,
-          { role: "assistant" as const, text: r.reply || "（无回复）" },
-        ].slice(-MAX_BUBBLES));
+        const result = await postChat({
+          message: prefix + trimmed,
+          mode,
+          image_urls: vision ? [vision.dataUrl] : undefined,
+        });
+        setBubbles((prev) =>
+          [
+            ...prev,
+            {
+              role: "assistant" as const,
+              text: result.reply || "我暂时没有生成有效回复，可以换个问法再试一次。",
+            },
+          ].slice(-MAX_BUBBLES),
+        );
         setMessage("");
-      } catch (e) {
-        const em = e instanceof Error ? e.message : "请求失败";
-        setErr(em);
-        setBubbles((prev) => [
-          ...prev,
-          {
-            role: "assistant" as const,
-            text: `请求失败：${em}`,
-          },
-        ].slice(-MAX_BUBBLES));
+      } catch (err) {
+        const text = err instanceof Error ? err.message : "请求失败";
+        setError(text);
+        setBubbles((prev) =>
+          [...prev, { role: "assistant" as const, text: `请求失败：${text}` }].slice(
+            -MAX_BUBBLES,
+          ),
+        );
       } finally {
         setBusy(false);
       }
     },
-    [busy, attachPdfPage, pdfVisionProvider],
+    [attachPdfPage, busy, pdfVisionProvider],
   );
 
-  const sendWithCurrentPage = useCallback(async () => {
-    if (busy) return;
-    const t = message.trim();
-    if (!t) return;
-    if (typeof pdfVisionProvider !== "function") {
-      setErr("未检测到可用的 PDF 预览（请先在中间区域打开一个 PDF）。");
+  const sendWithCurrentPage = useCallback(() => {
+    if (!message.trim() || busy) return;
+    if (!pdfVisionProvider) {
+      setError("请先在中间区域打开一个 PDF，再让 AI 结合当前页回答。");
       return;
     }
-    void send(t, "free");
+    void send(message, "free");
   }, [busy, message, pdfVisionProvider, send]);
 
   return (
     <aside
-      className="flex h-full w-[340px] shrink-0 flex-col border-l border-[var(--agent-border)] bg-gradient-to-b from-[#f6f8fc] via-[var(--agent-bg)] to-[#eef2fa]"
+      className="flex h-full w-[360px] shrink-0 flex-col border-l border-[var(--agent-border)] bg-[var(--agent-bg)]/95 backdrop-blur-xl"
       aria-label="AI 学习助手"
     >
-      <div className="relative shrink-0 overflow-hidden border-b border-[var(--agent-border)] bg-white/80 px-4 py-4 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-sm">
-        <div className="pointer-events-none absolute right-0 top-0 h-24 w-24 rounded-full bg-[var(--accent-soft)] blur-2xl" />
-        <div className="relative flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[#4a9eed] text-white shadow-md">
+      <div className="lw-hairline-top shrink-0 border-b border-[var(--agent-border)] px-4 py-4">
+        <div className="flex items-start gap-3">
+          <span className="lw-scan grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--accent)] text-white shadow-[0_12px_24px_-14px_var(--accent-glow)]">
             <Bot className="h-5 w-5" strokeWidth={1.75} />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="flex items-center gap-1.5 text-[15px] font-semibold tracking-tight text-[var(--agent-fg)]">
+            <h2 className="flex items-center gap-1.5 text-[15px] font-black tracking-tight text-[var(--agent-fg)]">
               <Sparkles className="h-4 w-4 text-[var(--accent)]" />
               AI 学习助手
             </h2>
-            <p className="mt-0.5 text-[11px] leading-snug text-[var(--agent-muted)]">
-              <code className="rounded-md bg-[var(--chip-bg)] px-1.5 py-0.5 text-[10px]">
-                POST /api/chat
-              </code>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--agent-muted)]">
+              结合 PDF 页面回答，也可以独立解释知识点。
             </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--agent-muted)]">
-              <label className="inline-flex cursor-pointer items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={attachPdfPage}
-                  onChange={(e) => setAttachPdfPage(e.target.checked)}
-                />
-                发送时让 AI 看当前页
-              </label>
-              <span className="rounded-full border border-[var(--agent-border)] bg-white px-2 py-0.5">
-                {pdfVisionProvider ? "已连接 PDF 预览" : "未连接 PDF 预览"}
-              </span>
-              <button
-                type="button"
-                onClick={clearHistory}
-                className="rounded-full border border-[var(--agent-border)] bg-white px-2.5 py-0.5 text-[11px] font-medium text-[var(--agent-fg)] shadow-sm transition hover:bg-[var(--chip-bg)]"
-                title="清空对话记录"
-              >
-                清空对话
-              </button>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                disabled={busy}
-                className="rounded-full border border-[var(--agent-border)] bg-white px-2.5 py-1 text-[11px] font-medium text-[var(--agent-fg)] shadow-sm transition hover:border-[var(--accent)]/40 hover:shadow disabled:opacity-50"
-                onClick={() =>
-                  void send("请说明：如何判断一道树相关题目（或图论题）我总在哪儿出错？", "explain")
-                }
-              >
-                解释易错
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="rounded-full border border-[var(--agent-border)] bg-white px-2.5 py-1 text-[11px] font-medium text-[var(--agent-fg)] shadow-sm transition hover:border-[var(--accent)]/40 hover:shadow disabled:opacity-50"
-                onClick={() =>
-                  void send("请把我最近错题里最常出现的知识点列成条目。", "summarize")
-                }
-              >
-                总结知识点
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="rounded-full border border-[var(--agent-border)] bg-white px-2.5 py-1 text-[11px] font-medium text-[var(--agent-fg)] shadow-sm transition hover:border-[var(--accent)]/40 hover:shadow disabled:opacity-50"
-                onClick={() =>
-                  void send("请根据我上一条描述的知识点，再出两道举一反三的练习题。", "similar")
-                }
-              >
-                再出题
-              </button>
-            </div>
           </div>
           {onToggleCollapse ? (
             <button
               type="button"
               onClick={onToggleCollapse}
-              className="ml-1 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--agent-border)] bg-white text-[var(--agent-fg)] shadow-sm transition hover:bg-[var(--chip-bg)]"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--agent-border)] bg-[var(--agent-bubble-bg)] text-[var(--agent-muted)] shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:bg-[var(--chip-bg)]"
               title="收起 AI 助手"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
           ) : null}
         </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-[var(--agent-muted)]">
+          <label className="inline-flex cursor-pointer items-center gap-1.5">
+            <input
+              className="accent-[var(--accent)]"
+              type="checkbox"
+              checked={attachPdfPage}
+              onChange={(event) => setAttachPdfPage(event.target.checked)}
+            />
+            发送时附带当前 PDF 页
+          </label>
+          <span className="rounded-lg border border-[var(--agent-border)] bg-[var(--agent-bubble-bg)] px-2 py-1 shadow-[var(--shadow-sm)]">
+            {pdfVisionProvider ? "PDF 预览已连接" : "未打开 PDF"}
+          </span>
+        </div>
+
+        <div className="mt-3 overflow-hidden rounded-lg border border-[var(--agent-border)] bg-[var(--agent-bubble-bg)] py-2 shadow-[var(--shadow-sm)]">
+          <div className="learning-marquee flex w-max gap-2 px-2">
+            {[...PROMPTS, ...PROMPTS].map((prompt, index) => (
+              <button
+                key={`${prompt}-${index}`}
+                type="button"
+                disabled={busy}
+                onClick={() => void send(prompt, "free")}
+                className="rounded-lg border border-[var(--agent-border)] bg-[var(--main-bg)] px-3 py-1.5 text-[11px] font-bold text-[var(--agent-fg)] shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:border-[var(--accent)]/40 hover:text-[var(--accent)] disabled:opacity-50"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-4">
-        {err ? (
-          <div className="rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-900 shadow-sm">
-            {err}
+      <div ref={scrollRef} className="lw-scroll-fade min-h-0 flex-1 space-y-3 overflow-auto px-4 py-4">
+        {error ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 shadow-sm">
+            {error}
           </div>
         ) : null}
-        {bubbles.map((b, i) => (
+
+        {bubbles.map((bubble, index) => (
           <div
-            key={i}
-            className={`rounded-2xl border px-3.5 py-2.5 text-[13px] leading-relaxed shadow-sm transition duration-200 ${
-              b.role === "user"
-                ? "ml-6 border-[var(--accent)]/25 bg-gradient-to-br from-[var(--accent-soft)] to-white text-[var(--main-fg)]"
-                : "mr-4 border-white/80 bg-white/90 text-[var(--agent-fg)] shadow-[var(--shadow-card)]"
+            key={`${bubble.role}-${index}`}
+            className={`lw-reveal rounded-lg border px-3.5 py-2.5 text-[13px] leading-relaxed shadow-[var(--shadow-sm)] ${
+              bubble.role === "user"
+                ? "ml-6 border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--agent-fg)]"
+                : "mr-4 border-[var(--agent-border)] bg-[var(--agent-bubble-bg)] text-[var(--agent-fg)]"
             }`}
           >
-            {b.role === "assistant" ? (
-              <span className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
-                <MessageCircle className="h-3 w-3" />
-                助手
-              </span>
-            ) : (
-              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[var(--main-muted)]">
-                你
-              </span>
-            )}
-            {b.text}
+            <span className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-[var(--accent)]">
+              {bubble.role === "assistant" ? <MessageCircle className="h-3 w-3" /> : null}
+              {bubble.role === "assistant" ? "助手" : "你"}
+            </span>
+            {bubble.text}
           </div>
         ))}
+
         {busy ? (
           <div className="flex items-center gap-2 pl-1 text-[12px] text-[var(--agent-muted)]">
             <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
-            思考中…
+            正在思考...
           </div>
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-[var(--agent-border)] bg-white/90 p-3 backdrop-blur-md">
-        <div className="flex gap-2 rounded-2xl border border-[var(--agent-border)] bg-[var(--agent-input-bg)] p-2 shadow-inner transition focus-within:border-[var(--accent)]/35 focus-within:ring-2 focus-within:ring-[var(--accent)]/15">
+      <div className="shrink-0 border-t border-[var(--agent-border)] bg-[var(--agent-bg)] p-3">
+        <div className="flex gap-2 rounded-lg border border-[var(--agent-border)] bg-[var(--agent-input-bg)] p-2 shadow-inner transition focus-within:border-[var(--accent)]/50 focus-within:ring-2 focus-within:ring-[var(--accent-soft)]">
           <textarea
             className="max-h-28 min-h-[48px] flex-1 resize-none bg-transparent px-2 py-2 text-[13px] text-[var(--agent-fg)] outline-none placeholder:text-[var(--agent-muted)]"
-            placeholder="例如：这道极限我总在换元时漏条件…"
+            placeholder="例如：这一页的重点是什么？这道题为什么选 B？"
             rows={2}
             value={message}
             disabled={busy}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
+            onChange={(event) => setMessage(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
                 void send(message, "free");
               }
             }}
@@ -269,26 +267,34 @@ export function AgentPanel({
           <button
             type="button"
             disabled={busy || !message.trim()}
-            className="self-end flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-white shadow-md transition hover:opacity-95 disabled:opacity-40"
+            className="self-end grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--accent)] text-white shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:opacity-95 disabled:translate-y-0 disabled:opacity-40"
             title="发送"
             onClick={() => void send(message, "free")}
           >
             <Send className="h-4 w-4" strokeWidth={2} />
           </button>
         </div>
+
         <div className="mt-2 flex items-center justify-between gap-2 px-1">
           <button
             type="button"
             disabled={busy || !message.trim() || !pdfVisionProvider}
-            className="rounded-xl border border-[var(--agent-border)] bg-white px-3 py-2 text-[12px] font-semibold text-[var(--agent-fg)] shadow-sm transition hover:bg-[var(--chip-bg)] disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--agent-border)] bg-[var(--agent-bubble-bg)] px-3 py-2 text-[12px] font-bold text-[var(--agent-fg)] shadow-[var(--shadow-sm)] transition hover:-translate-y-px hover:bg-[var(--chip-bg)] disabled:translate-y-0 disabled:opacity-40"
             onClick={sendWithCurrentPage}
-            title="把当前页截图发给 AI 再回答"
+            title="把当前 PDF 页截图发给 AI 后再回答"
           >
-            让 AI 看当前页再回答
+            <Paperclip className="h-3.5 w-3.5" />
+            结合当前页
           </button>
-          <span className="text-[11px] text-[var(--agent-muted)]">
-            建议提问：这一页讲了什么 / 总结这一页要点
-          </span>
+          <button
+            type="button"
+            onClick={clearHistory}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-2 text-[12px] font-semibold text-[var(--agent-muted)] transition hover:bg-[var(--chip-bg)] hover:text-[var(--agent-fg)]"
+            title="清空对话记录"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            清空
+          </button>
         </div>
       </div>
     </aside>
